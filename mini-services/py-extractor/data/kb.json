@@ -1,0 +1,107 @@
+{
+ "entries": [
+  {
+   "scope": "mechanic",
+   "field": "chassis_no",
+   "wrong": "KNARH8lE7T540448",
+   "right": "KNARH81E7T5404488",
+   "context": "",
+   "count": 2,
+   "ts": "2026-09-08T20:26:35"
+  },
+  {
+   "scope": "mechanic",
+   "field": "chassis_no",
+   "wrong": "JTNB29HK",
+   "right": "JTNB29HK8N3111474",
+   "context": "",
+   "count": 1,
+   "ts": "2026-09-08T20:37:04"
+  }
+ ],
+ "chains": [
+  {
+   "scope": "tables",
+   "chain": [
+    "upscale",
+    "gray",
+    "shadow",
+    "clahe",
+    "close",
+    "micro",
+    "stretch"
+   ],
+   "score": 0.8,
+   "ts": "2026-09-08T20:22:40"
+  },
+  {
+   "scope": "tables",
+   "chain": [
+    "upscale",
+    "gray",
+    "shadow",
+    "clahe",
+    "close",
+    "micro",
+    "stretch"
+   ],
+   "score": 1.0,
+   "ts": "2026-09-08T20:23:29"
+  },
+  {
+   "scope": "tables",
+   "chain": [
+    "upscale",
+    "gray",
+    "shadow",
+    "clahe",
+    "close",
+    "micro",
+    "stretch"
+   ],
+   "score": 1.0,
+   "ts": "2026-09-08T20:33:18"
+  },
+  {
+   "scope": "tables",
+   "chain": [
+    "gray",
+    "shadow60",
+    "clahe_micro",
+    "close",
+    "stretch"
+   ],
+   "score": 1.0,
+   "ts": "2026-09-08T21:52:25"
+  },
+  {
+   "scope": "tables",
+   "chain": [
+    "upscale",
+    "gray",
+    "shadow",
+    "clahe",
+    "close",
+    "micro",
+    "stretch"
+   ],
+   "score": 1.0,
+   "ts": "2026-09-09T06:13:28"
+  },
+  {
+   "scope": "tables",
+   "chain": [
+    "perspective",
+    "upscale",
+    "gray",
+    "shadow",
+    "clahe",
+    "close",
+    "micro",
+    "stretch"
+   ],
+   "score": 0.8,
+   "ts": "2026-09-09T08:29:40"
+  }
+ ]
+}

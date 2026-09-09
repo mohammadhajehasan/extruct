@@ -1,0 +1,10 @@
+{
+  "name": "py-extractor",
+  "version": "7.1.0",
+  "private": true,
+  "description": "خدمة المستخرج الأسطوري v7.1 — FastAPI على المنفذ 8000",
+  "scripts": {
+    "dev": "python3 -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload",
+    "start": "python3 -m uvicorn main:app --host 0.0.0.0 --port 8000"
+  }
+}
