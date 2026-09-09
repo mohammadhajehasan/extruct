@@ -135,7 +135,7 @@ ERROR_TYPE_AR = {
     ProviderErrorType.AUTH_INVALID:
         "مفتاح API غير صحيح أو منتهٍ — تحقق من الإعدادات",
     ProviderErrorType.RATE_LIMITED:
-        "تجاوزت حد معدل الطلبات لدى المزود — انتظر قليلاً ثم أعد المحاولة",
+        "🟠 تجاوزت حد معدل الطلبات أو الحصة المتاحة لدى المزود (429/402) — انتظر قليلاً، أو غيّر النموذج، أو أضف رصيداً ثم أعد المحاولة",
     ProviderErrorType.NETWORK_DOWN:
         "تعذر الوصول إلى المزود (مهلة أو اتصال مقطوع) — تحقق من الشبكة أو الرابط",
     ProviderErrorType.UNKNOWN:
@@ -150,6 +150,17 @@ _GEO_TEXT_PATTERNS = (
     "user location is not supported",      # صيغة Gemini الفعلية
     "location is not supported",
 )
+# 16: أنماط نصية لحد المعدل/الحصة — OpenRouter وغيره يرجعون 429/402 بنصوص
+# متغيرة (free-models-per-day، insufficient credits، quota) قد تصل بلا status_code
+_RATE_TEXT_PATTERNS = (
+    "rate limit",
+    "ratelimit",
+    "too many requests",
+    "quota",
+    "free-models-per-day",
+    "insufficient credits",
+    "monthly limit",
+)
 
 
 def classify_provider_error(status_code, text: str = "") -> ProviderErrorType:
@@ -162,7 +173,7 @@ def classify_provider_error(status_code, text: str = "") -> ProviderErrorType:
         return ProviderErrorType.GEO_BLOCKED
     if status_code == 401:
         return ProviderErrorType.AUTH_INVALID
-    if status_code == 429:
+    if status_code in (429, 402):  # 402 = رصيد/حصة مستنزفة — نفس عائلة الحد
         return ProviderErrorType.RATE_LIMITED
     if status_code is None:
         return ProviderErrorType.NETWORK_DOWN
@@ -174,8 +185,11 @@ def classify_exception(e: BaseException) -> ProviderErrorType:
     النص يُفحص أولاً بحثاً عن أنماط الحظر الجغرافي (قد تأتي مع 403/400)،
     ثم أخطاء الشبكة، ثم رمز الحالة إن وُجد، وإلا UNKNOWN."""
     text = str(e) or ""
-    if any(p in text.lower() for p in _GEO_TEXT_PATTERNS):
+    low = text.lower()
+    if any(p in low for p in _GEO_TEXT_PATTERNS):
         return ProviderErrorType.GEO_BLOCKED
+    if any(p in low for p in _RATE_TEXT_PATTERNS):
+        return ProviderErrorType.RATE_LIMITED
     if isinstance(e, (openai.APITimeoutError, openai.APIConnectionError,
                       TimeoutError, ConnectionError,
                       httpx.TimeoutException, httpx.NetworkError)):

@@ -457,7 +457,8 @@ async def extract_failover(req: FailoverReq):
             failures.append((link, e))
             nxt = chain[i + 1].provider if i + 1 < len(chain) else None
             audit.log("provider.failover", target=req.mode, model=link.provider,
-                      details={"reason": et.value, "next": nxt})
+                      details={"reason": et.value, "next": nxt,
+                               "raw": str(e)[:160]})
             if et == providers.ProviderErrorType.AUTH_INVALID:
                 # توقف فوراً ولا تنتقل صامتاً — قد يكون نفس السبب لكل السلسلة
                 elapsed = int((time.time() - t0) * 1000)
@@ -484,7 +485,8 @@ async def extract_failover(req: FailoverReq):
             failures.append((link, e))
             nxt = chain[i + 1].provider if i + 1 < len(chain) else None
             audit.log("provider.failover", target=req.mode, model=link.provider,
-                      details={"reason": et.value, "next": nxt})
+                      details={"reason": et.value, "next": nxt,
+                               "raw": str(e)[:160]})
             continue
         elapsed = int((time.time() - t0) * 1000)
         audit.log("extract.failover", target=req.mode, model=link.provider,

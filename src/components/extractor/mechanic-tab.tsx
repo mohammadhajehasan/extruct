@@ -222,6 +222,7 @@ export function MechanicTab() {
     setExtracting(true);
     setExtractTotal(groups.length);
     setExtractDone(0);
+    let failures = 0;
     await mapPool(groups, settings.concurrency, async (g, gi) => {
       try {
         // 15.10: مسار موحّد واعٍ للسلسلة — مباشر أو عبر failover حسب الإعدادات
@@ -276,12 +277,19 @@ export function MechanicTab() {
           fallback: "خطأ",
           context: `فشل استخراج سجل (${g.category_ar})`,
         });
+        failures++;
       }
       setExtractDone((d) => d + 1);
     });
     setExtracting(false);
     setExtractTotal(0);
-    toast.success("اكتمل استخراج السجلات — راجع الخلايا المعلَّمة");
+    // 16: بلا رسالة نجاح كاذبة — الفشل الجزئي/الكامل يُعرض بصدق
+    if (failures > 0)
+      toast.error(
+        `فشل استخراج ${failures} من ${groups.length} سجلات — راجع رسالة الخطأ أعلاه`,
+        { duration: 9000 },
+      );
+    else toast.success("اكتمل استخراج السجلات — راجع الخلايا المعلَّمة");
   };
 
   const cellClick = (recordId: string, categoryAr: string, fieldKey: string, flag: { confidence: Confidence; reasons: string[] }, value: string) => {
