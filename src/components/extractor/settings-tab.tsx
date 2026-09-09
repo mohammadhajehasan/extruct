@@ -826,6 +826,25 @@ export function SettingsTab() {
               حارس DPI: القيم الأقل من 200 تُنذر — 300 هي الافتراضية الموصى بها.
             </p>
           </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="concurrency">المسارات المتوازية — 1 إلى 6</Label>
+            <Input
+              id="concurrency"
+              type="number"
+              min={1}
+              max={6}
+              value={settings.concurrency}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                if (!Number.isNaN(v)) setSettings({ concurrency: Math.min(6, Math.max(1, Math.round(v))) });
+              }}
+              className="min-h-11"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              سرعة المعالجة: عدد الصور المستخرجة في نفس الوقت. الافتراضي 3 —
+              ارفعه إلى 4-6 لتسريع الدفعات الكبيرة (قد يستهلك حد معدل المزود أسرع).
+            </p>
+          </div>
           <Separator />
           <div className="flex items-center justify-between gap-2">
             <div>

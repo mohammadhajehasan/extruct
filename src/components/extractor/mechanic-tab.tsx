@@ -153,8 +153,8 @@ export function MechanicTab() {
     setClassifyTotal(pending.length);
     setClassifyDone(0);
     let failures = 0;
-    // دفعة متوازية بمسارين — عدّاد الفشل داخل العامل (لا تعارض على المتغير)
-    await mapPool(pending, 2, async (item) => {
+    // دفعة متوازية بعدد المسارات من الإعدادات — عدّاد الفشل داخل العامل (لا تعارض على المتغير)
+    await mapPool(pending, settings.concurrency, async (item) => {
       try {
         const b64 = await getEnhanceB64(item);
         // 15.10: مسار موحّد واعٍ للسلسلة — مباشر أو عبر failover حسب الإعدادات
@@ -216,13 +216,13 @@ export function MechanicTab() {
   };
 
   // ---------- الخطوة 4: الاستخراج ----------
-  // دفعة متوازية بمسارين — كل سجل مستقل والعزل بالخطأ داخل العامل
+  // دفعة متوازية بعدد المسارات من الإعدادات — كل سجل مستقل والعزل بالخطأ داخل العامل
   const extractAllGroups = async () => {
     if (groups.length === 0) return;
     setExtracting(true);
     setExtractTotal(groups.length);
     setExtractDone(0);
-    await mapPool(groups, 2, async (g, gi) => {
+    await mapPool(groups, settings.concurrency, async (g, gi) => {
       try {
         // 15.10: مسار موحّد واعٍ للسلسلة — مباشر أو عبر failover حسب الإعدادات
         const res = await smartExtract({

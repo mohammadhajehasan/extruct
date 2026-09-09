@@ -240,7 +240,7 @@ export function TablesTab() {
     }
   };
 
-  // دفعة متوازية بمسارين — تقلّص الزمن الكلي للنصف تقريباً دون إغراق المزود
+  // دفعة متوازية بعدد المسارات من الإعدادات — تقلّص الزمن الكلي دون إغراق المزود
   const extractAll = async () => {
     const pending = images.filter((i) => !tableResults.some((t) => t.imageId === i.id));
     if (pending.length === 0) {
@@ -249,7 +249,7 @@ export function TablesTab() {
     }
     setBatchTotal(pending.length);
     setBatchDone(0);
-    await mapPool(pending, 2, async (item) => {
+    await mapPool(pending, useExtractorStore.getState().settings.concurrency, async (item) => {
       await doExtract(item.id, { silent: true });
       setBatchDone((d) => d + 1);
     });

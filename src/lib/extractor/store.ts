@@ -24,6 +24,8 @@ export interface ExtractorSettings {
   visionOnly: boolean;
   profile: string;
   dpi: number;
+  // 13: سرعة المعالجة — عدد المسارات المتوازية لطلبات النموذج (1-6)
+  concurrency: number;
   consensusEnabled: boolean;
   // 15.10.5 سلسلة التراجع التلقائي
   failoverEnabled: boolean;
@@ -38,6 +40,7 @@ export const DEFAULT_SETTINGS: ExtractorSettings = {
   visionOnly: false,
   profile: "darken_clarity",
   dpi: 300,
+  concurrency: 3,
   consensusEnabled: true,
   failoverEnabled: false,
 };
@@ -373,6 +376,12 @@ export const useExtractorStore = create<ExtractorStore>()(
           }
           settings.providerKeys = clean;
         }
+        // سرعة المعالجة: قصّ دفاعي 1-6 وحماية من القيم التالفة/الناقصة
+        const ccRaw = (settings as { concurrency?: unknown }).concurrency;
+        const cc = Number(ccRaw);
+        settings.concurrency = Number.isFinite(cc)
+          ? Math.min(6, Math.max(1, Math.round(cc)))
+          : DEFAULT_SETTINGS.concurrency;
         return { ...p, settings } as unknown as ExtractorStore;
       },
       skipHydration: true,
