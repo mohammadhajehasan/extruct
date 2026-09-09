@@ -50,6 +50,37 @@ export function getProviderKey(settings: ExtractorSettings, providerId: string):
   return (settings.providerKeys?.[providerId] ?? "").trim();
 }
 
+/**
+ * توحيد الإعدادات القادمة من التخزين المحلي: يملأ الحقول الجديدة من الافتراضي
+ * ويقصّ القيم التالفة — يُستخدم في merge (كل تهيئة) و migrate (تغيّر الإصدار).
+ * يمنع انكسار «controlled input» عند إضافة حقول مستقبلاً (مثل concurrency)
+ * لأن الدمج الافتراضي في zustand يستبدل كائن settings كاملاً بلا دمج عميق.
+ */
+function withSettingsDefaults(s?: Partial<ExtractorSettings> | null): ExtractorSettings {
+  const m = { ...DEFAULT_SETTINGS, ...(s ?? {}) } as ExtractorSettings;
+  const cc = Number(m.concurrency);
+  m.concurrency = Number.isFinite(cc)
+    ? Math.min(6, Math.max(1, Math.round(cc)))
+    : DEFAULT_SETTINGS.concurrency;
+  const dpi = Number(m.dpi);
+  m.dpi = Number.isFinite(dpi)
+    ? Math.min(400, Math.max(50, Math.round(dpi)))
+    : DEFAULT_SETTINGS.dpi;
+  if (!m.providerKeys || typeof m.providerKeys !== "object" || Array.isArray(m.providerKeys)) {
+    m.providerKeys = {};
+  } else {
+    const clean: Record<string, string> = {};
+    for (const [k, v] of Object.entries(m.providerKeys)) {
+      if (typeof v === "string" && v.trim()) clean[k] = v.trim();
+    }
+    m.providerKeys = clean;
+  }
+  if (m.provider === "zai" && !m.baseUrl.trim()) {
+    m.baseUrl = "https://api.z.ai/api/paas/v4";
+  }
+  return m;
+}
+
 // ---------- عناصر الصور (الأصل لا يُلمس أبداً) ----------
 // 15.8.3: تتبّع مصدر كل عنصر — صورة منفصلة أم صفحة PDF من أي ملف (طابور موحّد)
 export interface ImageItem {
@@ -342,11 +373,23 @@ export const useExtractorStore = create<ExtractorStore>()(
       partialize: (s) =>
         ({ settings: s.settings, providerStatuses: s.providerStatuses }) as unknown as ExtractorStore,
       version: 2,
+      // دمج عميق للإعدادات عند كل تهيئة (لا فقط عند تغيّر الإصدار): الحقول
+      // الجديدة تأخذ قيمتها الافتراضية بدل undefined — يمنع خطأ
+      // controlled→uncontrolled في المدخلات وانكسار mapPool(undefined)
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<ExtractorStore>;
+        return {
+          ...current,
+          ...p,
+          settings: withSettingsDefaults(p.settings),
+          providerStatuses: { ...current.providerStatuses, ...(p.providerStatuses ?? {}) },
+        } as ExtractorStore;
+      },
       migrate: (persisted, fromVersion) => {
         const p = (persisted ?? {}) as Partial<ExtractorStore> & {
           settings?: Partial<ExtractorSettings> & { apiKey?: string };
         };
-        const settings: ExtractorSettings = { ...DEFAULT_SETTINGS, ...(p.settings ?? {}) };
+        const settings: ExtractorSettings = withSettingsDefaults(p.settings);
         if (settings.provider === "zai" && !settings.baseUrl.trim()) {
           settings.baseUrl = "https://api.z.ai/api/paas/v4";
         }
