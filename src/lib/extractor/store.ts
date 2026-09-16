@@ -2,6 +2,8 @@
 
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
+import { toast } from "sonner";
+import { PY, b64ToDataUrl } from "./api";
 import type {
   EditorOp,
   ModelInfo,
@@ -10,25 +12,26 @@ import type {
   BenchmarkResult,
   Confidence,
   ProviderStatus,
+  MechanicParsed,
 } from "./types";
+import { getExtractB64 } from "./imaging";
+import { smartExtract } from "./failover";
 
 // ---------- الإعدادات (تُحفظ في localStorage فقط — المفاتيح تبقى في المتصفح) ----------
 export interface ExtractorSettings {
   provider: string;
   model: string;
   baseUrl: string;
-  // تخصيص المفاتيح: كل مزود له مفتاحه الخاص فقط — ما يُحفظ لمزود لا يُعرض ولا
-  // يُرسل لأي مزود آخر (persist v2). Record<mzodId, key> في متصفح المستخدم حصراً.
   providerKeys: Record<string, string>;
   freeFirst: boolean;
   visionOnly: boolean;
   profile: string;
   dpi: number;
-  // 13: سرعة المعالجة — عدد المسارات المتوازية لطلبات النموذج (1-6)
   concurrency: number;
   consensusEnabled: boolean;
-  // 15.10.5 سلسلة التراجع التلقائي
   failoverEnabled: boolean;
+  // 15.10.8 مزودات مخصصة متعددة — كل واحدة لها baseUrl/اسم مستقل
+  customProviders: Array<{ id: string; name_ar: string; baseUrl: string; needsKey: boolean }>;
 }
 
 export const DEFAULT_SETTINGS: ExtractorSettings = {
@@ -43,11 +46,33 @@ export const DEFAULT_SETTINGS: ExtractorSettings = {
   concurrency: 3,
   consensusEnabled: true,
   failoverEnabled: false,
+  customProviders: [],
 };
 
 /** مفتاح مزود محدد — مُقَصّص دائماً ("" إن لم يُحفظ شيء) */
 export function getProviderKey(settings: ExtractorSettings, providerId: string): string {
   return (settings.providerKeys?.[providerId] ?? "").trim();
+}
+
+/** التحقق من صحة المفتاح للمزود — تُستدعى عند الحفظ */
+export async function validateProviderKey(providerId: string, apiKey: string, baseUrl: string): Promise<{ valid: boolean; errorAr?: string }> {
+  // OAuth-2026: التحقق من المفتاح بإرساله إلى ping_provider الخاص بالمزود
+  // يستقبل {available, error_type, error_ar} فقط ولا يُخزّن المفتاح
+  try {
+    const res = await fetch(`${PY}/api/py/providers/health`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ base_url: baseUrl, api_key: apiKey, timeout: 10 })
+    });
+    const data = await res.json();
+    if (data.ok && data.error_type !== "auth_invalid") {
+      return { valid: true };
+    }
+    return { valid: false, errorAr: data.error_ar || "مفتاح غير صالح لهذا المزود" };
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    return { valid: false, errorAr: `تعذر الاتصال بالمزود للتحقق (${detail})` };
+  }
 }
 
 /**
@@ -101,6 +126,7 @@ export interface TableResult {
   id: string;
   imageId: string;
   imageName: string;
+  imageDataUrl?: string; // الصورة الأصلية كنموذج للربط (dataUrl)
   csv: string;
   rows: number;
   model: string;
@@ -156,6 +182,9 @@ interface ExtractorStore {
   settings: ExtractorSettings;
   setSettings: (p: Partial<ExtractorSettings>) => void;
   resetSettings: () => void;
+  addCustomProvider: (p: { id: string; name_ar: string; baseUrl: string; needsKey: boolean }) => void;
+  removeCustomProvider: (id: string) => void;
+  updateCustomProvider: (id: string, p: Partial<{ name_ar: string; baseUrl: string; needsKey: boolean }>) => void;
 
   // النماذج
   models: ModelInfo[];
@@ -196,6 +225,13 @@ interface ExtractorStore {
   removeMechanicRecord: (id: string) => void;
   clearMechanicRecords: () => void;
 
+  // الأفلاس (فشل الاستخراج)
+  failures: Array<{ imageId: string; mode: "tables" | "mechanic"; error: string; error_ar?: string; timestamp: number; imageDataUrl?: string; imageName?: string; faceB64s?: string[] }>;
+  addFailure: (f: { imageId: string; mode: "tables" | "mechanic"; error: string; error_ar?: string; timestamp: number; imageDataUrl?: string; imageName?: string; faceB64s?: string[] }) => void;
+  clearFailures: () => void;
+  removeFailure: (id: string) => void;
+  retryExtraction: (imageId: string, mode: "tables" | "mechanic") => Promise<void>;
+
   // طابور التدقيق
   reviewQueue: ReviewItem[];
   addReviewItems: (items: Omit<ReviewItem, "id">[]) => void;
@@ -235,6 +271,32 @@ export const useExtractorStore = create<ExtractorStore>()(
       settings: { ...DEFAULT_SETTINGS },
       setSettings: (p) => set((s) => ({ settings: { ...s.settings, ...p } })),
       resetSettings: () => set({ settings: { ...DEFAULT_SETTINGS } }),
+      addCustomProvider: (p) =>
+        set((s) => ({
+          settings: {
+            ...s.settings,
+            customProviders: [...s.settings.customProviders, p],
+          },
+        })),
+      removeCustomProvider: (id) =>
+        set((s) => ({
+          settings: {
+            ...s.settings,
+            customProviders: s.settings.customProviders.filter((p) => p.id !== id),
+            providerKeys: Object.fromEntries(
+              Object.entries(s.settings.providerKeys ?? {}).filter(([k]) => k !== id)
+            ),
+          },
+        })),
+      updateCustomProvider: (id, p) =>
+        set((s) => ({
+          settings: {
+            ...s.settings,
+            customProviders: s.settings.customProviders.map((cp) =>
+              cp.id === id ? { ...cp, ...p } : cp
+            ),
+          },
+        })),
 
       models: [],
       modelsSource: null,
@@ -322,6 +384,115 @@ export const useExtractorStore = create<ExtractorStore>()(
       removeMechanicRecord: (id) =>
         set((s) => ({ mechanicRecords: s.mechanicRecords.filter((r) => r.id !== id) })),
       clearMechanicRecords: () => set({ mechanicRecords: [] }),
+
+      // 16: الأفلاس (فشل الاستخراج)
+      failures: [] as Array<{ imageId: string; mode: "tables" | "mechanic"; error: string; error_ar?: string; timestamp: number; imageDataUrl?: string; imageName?: string; faceB64s?: string[] }>,
+      addFailure: (f) =>
+        set((s) => ({ failures: [...s.failures, f] })),
+      clearFailures: () => set({ failures: [] }),
+      removeFailure: (id) =>
+        set((s) => ({ failures: s.failures.filter((f) => f.imageId !== id) })),
+retryExtraction: async (imageId, mode) => {
+        const st = useExtractorStore.getState();
+        const img = st.images.find((i) => i.id === imageId);
+        const failure = st.failures.find((f) => f.imageId === imageId);
+// Determine source: existing image in store vs group failure (no image in store)
+        const hasStoredImage = !!img;
+        const hasFailureData = !!failure?.faceB64s?.length;
+        if (!hasStoredImage && !hasFailureData) {
+          toast.error("الصورة غير موجودة في القائمة");
+          return;
+        }
+        try {
+          // For group failures, use stored faceB64s; for single image, compute from img
+          const srcB64s: string[] = hasFailureData ? (failure.faceB64s ?? []) : [await getExtractB64(img!)];
+          const b64 = srcB64s[0];
+          if (!b64 || b64.length < 100) {
+            toast.error("فشل تجهيز الصورة للاستخراج — جرّب إعادة تحميل الصورة");
+            return;
+          }
+          const res = await smartExtract({ mode, imagesB64: srcB64s });
+          if (mode === "tables") {
+            const { cleanCsvText } = await import("./api");
+            const csv = cleanCsvText(res.text);
+            const grid = parseCsvSimple(csv);
+            const resultId = `tbl_${imageId}_${Date.now().toString(36)}`;
+            // Use img data for single image, failure data for group
+            const recordImg = hasStoredImage ? img! : { name: failure?.imageName ?? imageId, dataUrl: failure?.imageDataUrl ?? "" };
+            st.addTableResult({
+              id: resultId,
+              imageId,
+              imageName: recordImg.name,
+              imageDataUrl: recordImg.dataUrl,
+              csv,
+              rows: grid.length,
+              model: res.model,
+              elapsed_ms: res.elapsed_ms,
+            });
+            const unclear: Parameters<typeof st.addReviewItems>[0] = [];
+            grid.forEach((row, ri) => {
+              row.forEach((cell, ci) => {
+                if (cell.trim().toUpperCase() === "UNCLEAR") {
+                  unclear.push({
+                    scope: "tables",
+                    field: `خلية [${ri},${ci}]`,
+                    label: `خلية [${ri},${ci}] — ${recordImg.name}`,
+                    value: cell,
+                    confidence: "LOW",
+                    reasons: ["خلية غير مقروءة — علّمها من التدقيق ليتعلم النظام"],
+                    imageId,
+                    resultId,
+                    rowIdx: ri,
+                    colIdx: ci,
+                  });
+                }
+              });
+            });
+            if (unclear.length > 0) st.addReviewItems(unclear);
+            const { failoverNotice } = await import("./failover");
+            const notice = failoverNotice(res);
+            if (notice) toast.warning(notice);
+          } else {
+            const { validateRecord } = await import("./api");
+            const parsed = (res.parsed as MechanicParsed | undefined) ?? {
+              fields: {},
+              conflicts: [],
+              face_values: [],
+            };
+            const flags: Record<string, { confidence: Confidence; reasons: string[] }> = {};
+            let vinValid: boolean | undefined;
+            try {
+              const v = await validateRecord(parsed.fields);
+              for (const [k, fv] of Object.entries(v.fields)) {
+                flags[k] = {
+                  confidence: fv.confidence as Confidence,
+                  reasons: fv.reasons ?? [],
+                };
+              }
+              vinValid = v.chassis_no_vin_valid;
+            } catch { /* غير حاسم */ }
+            st.addMechanicRecord({
+              id: `rec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+              category_key: "unknown",
+              category_ar: "ميكانيك",
+              faces: srcB64s.map((face) => b64ToDataUrl(face)),
+              faceB64s: srcB64s,
+              method: "adjacency",
+              fields: parsed.fields,
+              vin_valid: vinValid,
+              flags,
+            });
+            const { failoverNotice } = await import("./failover");
+            const notice = failoverNotice(res);
+            if (notice) toast.warning(notice);
+          }
+          st.removeFailure(imageId);
+          toast.success(`✅ أُعيد الاستخراج بنجاح — ${res.elapsed_ms}ms`);
+        } catch (e) {
+          const errorAr = e instanceof Error ? e.message : String(e);
+          toast.error(errorAr);
+        }
+      },
 
       reviewQueue: [],
       addReviewItems: (items) =>
@@ -480,9 +651,67 @@ export function toCsvText(grid: string[][]): string {
       row
         .map((c) => {
           const v = c ?? "";
-          return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+          return /[,\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
         })
         .join(",")
     )
     .join("\n");
+}
+
+export async function kbFewshot(field: string, wrong?: string): Promise<{
+  shots: { wrong: string; right: string; count: number }[];
+}> {
+  try {
+    const res = await fetch(`${PY}/api/py/kb/fewshot`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ field, wrong })
+    });
+    const data = await res.json();
+    if (!res.ok || !data) {
+      throw new Error(`فشل جلب Few-shot (${res.status})`);
+    }
+    return { shots: data.shots ?? [] };
+  } catch (e) {
+    console.error("kbFewshot error:", e);
+    return { shots: [] };
+  }
+}
+
+export async function getProviderQuota(providerId: string, baseUrl: string, apiKey: string): Promise<{ remaining: number | null; limit: number | null; used: number | null; exhausted: boolean; status: string; errorAr?: string }> {
+  try {
+    const res = await fetch(`${PY}/api/py/providers/quota`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ base_url: baseUrl, api_key: apiKey, timeout: 8 })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      return {
+        remaining: data.remaining ?? null,
+        limit: data.limit ?? null,
+        used: data.used ?? null,
+        exhausted: !!data.exhausted,
+        status: data.status ?? "unknown",
+        errorAr: data.error_ar,
+      };
+    }
+    return {
+      remaining: null,
+      limit: null,
+      used: null,
+      exhausted: false,
+      status: "error",
+      errorAr: data.error_ar || "فشل فحص الرصيد",
+    };
+  } catch {
+    return {
+      remaining: null,
+      limit: null,
+      used: null,
+      exhausted: false,
+      status: "error",
+      errorAr: "تعذر الاتصال بفحص الرصيد",
+    };
+  }
 }

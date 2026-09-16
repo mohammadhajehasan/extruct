@@ -79,8 +79,9 @@ export function MechanicTab() {
   const addMechanicRecord = useExtractorStore((s) => s.addMechanicRecord);
   const removeMechanicRecord = useExtractorStore((s) => s.removeMechanicRecord);
   const clearMechanicRecords = useExtractorStore((s) => s.clearMechanicRecords);
-  const addReviewItem = useExtractorStore((s) => s.addReviewItem);
-  const settings = useExtractorStore((s) => s.settings);
+const addReviewItem = useExtractorStore((s) => s.addReviewItem);
+   const addFailure = useExtractorStore((s) => s.addFailure);
+   const settings = useExtractorStore((s) => s.settings);
 
   const [step, setStep] = useState(1);
   const [uploading, setUploading] = useState(false);
@@ -171,6 +172,16 @@ export function MechanicTab() {
       } catch (e) {
         // 15.10.2: رسالة مفصلة حسب نوع الخطأ — بلا تعطيل عدّاد الفشل
         showExtractError(e, { fallback: null });
+        // حفظ الفشل في قائمة الأفلاس
+        const imageId = item.id;
+        const errorAr = e instanceof Error ? e.message : String(e);
+        addFailure({
+          imageId: imageId,
+          mode: "mechanic",
+          error: errorAr,
+          error_ar: errorAr,
+          timestamp: Date.now()
+        });
         failures++;
       }
       setClassifyDone((d) => d + 1);
@@ -277,6 +288,20 @@ export function MechanicTab() {
           fallback: "خطأ",
           context: `فشل استخراج سجل (${g.category_ar})`,
         });
+        // حفظ الفشل في قائمة الأفلاس
+        if (g.faces && g.faces.length > 0) {
+          const errorAr = e instanceof Error ? e.message : String(e);
+          addFailure({
+            imageId: `group_${gi}_${g.category_key}`,
+            mode: "mechanic",
+            error: errorAr,
+            error_ar: errorAr,
+            timestamp: Date.now(),
+            imageDataUrl: b64ToDataUrl(g.faces[0]),
+            imageName: `${g.category_ar} (${g.faces.length} وجه)`,
+            faceB64s: g.faces,
+          });
+        }
         failures++;
       }
       setExtractDone((d) => d + 1);
@@ -294,15 +319,15 @@ export function MechanicTab() {
 
   const cellClick = (recordId: string, categoryAr: string, fieldKey: string, flag: { confidence: Confidence; reasons: string[] }, value: string) => {
     if (flag.confidence !== "REVIEW" && flag.confidence !== "MED") return;
-    addReviewItem({
-      scope: "mechanic",
-      field: fieldKey,
-      label: `${MECHANIC_FIELDS.find((f) => f.key === fieldKey)?.label_ar ?? fieldKey} — ${categoryAr}`,
-      value,
-      confidence: flag.confidence,
-      reasons: flag.reasons,
-      recordId,
-    });
+     addReviewItem({
+        scope: "mechanic",
+        field: fieldKey,
+        label: `${MECHANIC_FIELDS.find((f) => f.key === fieldKey)?.label_ar ?? fieldKey} — ${categoryAr}`,
+        value,
+        confidence: flag.confidence,
+        reasons: flag.reasons,
+        recordId,
+      });
     toast.success("أُضيف العنصر لطابور التدقيق");
   };
 

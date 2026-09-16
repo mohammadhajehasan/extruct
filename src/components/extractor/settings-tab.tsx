@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { toast } from "sonner";
 import {
   Button,
@@ -46,8 +46,11 @@ import {
   Globe,
   Save,
   CheckCircle2,
+  Wallet,
+  Edit2,
+  Trash2,
 } from "lucide-react";
-import { useExtractorStore, getProviderKey } from "@/lib/extractor/store";
+import { useExtractorStore, getProviderKey, validateProviderKey } from "@/lib/extractor/store";
 import {
   fetchModels,
   getProfiles,
@@ -55,8 +58,10 @@ import {
   getAudit,
   healthBatch,
   healthCheck,
+  providerQuota,
 } from "@/lib/extractor/api";
 import { OLLAMA_BASE_URL } from "@/lib/extractor/failover";
+import type { ProviderQuota } from "@/lib/extractor/api";
 import type { EnhanceProfile, AuditEntry, ProviderStatus } from "@/lib/extractor/types";
 
 const PROVIDERS: { id: string; name_ar: string; baseUrl: string; needsKey: boolean }[] = [
@@ -112,6 +117,12 @@ export function SettingsTab() {
   const kbCorrections = useExtractorStore((s) => s.kbCorrections);
   const setKb = useExtractorStore((s) => s.setKb);
   // 15.10 حالة الفحص الإقليمي
+  const addCustomProvider = useExtractorStore((s) => s.addCustomProvider);
+  const removeCustomProvider = useExtractorStore((s) => s.removeCustomProvider);
+  const updateCustomProvider = useExtractorStore((s) => s.updateCustomProvider);
+  const retryExtraction = useExtractorStore((s) => s.retryExtraction);
+  const clearFailures = useExtractorStore((s) => s.clearFailures);
+  // 15.10 حالة الفحص الإقليمي
   const providerStatuses = useExtractorStore((s) => s.providerStatuses);
   const setProviderStatus = useExtractorStore((s) => s.setProviderStatus);
 
@@ -119,18 +130,45 @@ export function SettingsTab() {
   const [kbByField, setKbByField] = useState<Record<string, number>>({});
   const [auditOpen, setAuditOpen] = useState(false);
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
-  const [auditLoading, setAuditLoading] = useState(false);
+const [auditLoading, setAuditLoading] = useState(false);
   const [providersChecking, setProvidersChecking] = useState(false);
+  // 16: فحص الرمز/الحصة
+  const [quotaChecking, setQuotaChecking] = useState(false);
+  const [quota, setQuota] = useState<ProviderQuota | null>(null);
   // إظهار/إخفاء مفتاح API (زر العين داخل الحقل — بنمط حقول كلمة السر في Material)
   const [showApiKey, setShowApiKey] = useState(false);
   // تخصيص المفاتيح: مسودة مفتاح المزود النشط (لا تُكتب للمخزن إلا بزر «حفظ المفتاح»)
   const [keyDraft, setKeyDraft] = useState("");
   const [keyTesting, setKeyTesting] = useState(false);
-
+  // موفرو مخصصين متعددين
+  const [newCustomProvider, setNewCustomProvider] = useState({
+    name_ar: "",
+    baseUrl: "",
+    needsKey: false,
+    apiKey: "",
+  });
+  const [editingCustomProviderId, setEditingCustomProviderId] = useState<string | null>(null);
+  const [editingCustomProvider, setEditingCustomProvider] = useState({
+    name_ar: "",
+    baseUrl: "",
+    needsKey: false,
+    apiKey: "",
+  });
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const currentProvider = PROVIDERS.find((p) => p.id === settings.provider) ?? PROVIDERS[0];
+  const currentCustomProviders = settings.customProviders || [];
+
+  // تعيين مزود نشط يشمل الموفرات المخصصة
+  const currentProvider = useMemo(() => {
+    const allProviders = [...PROVIDERS, ...currentCustomProviders];
+    return allProviders.find((p) => p.id === settings.provider) ?? allProviders[0];
+  }, [settings.provider, currentCustomProviders]);
   const needsKey = currentProvider.needsKey;
+
+  // For custom providers, the API key is stored in providerKeys[customId]
+  const currentCustomKey = settings.provider.startsWith("custom_")
+    ? getProviderKey(settings, settings.provider)
+    : "";
 
   // مفتاح المزود النشط المحفوظ (خاص به وحده) — والمسودة المنفصلة عنه
   const savedKey = useExtractorStore((s) => getProviderKey(s.settings, s.settings.provider));
@@ -140,7 +178,8 @@ export function SettingsTab() {
   // ترطيب localStorage المتأخر. لا تُمس أثناء الكتابة: الحفظ وحده هو ما يغيّر savedKey.
   useEffect(() => {
     const st = useExtractorStore.getState().settings;
-    setKeyDraft(getProviderKey(st, st.provider));
+    const draft = getProviderKey(st, st.provider);
+    setTimeout(() => setKeyDraft(draft), 0);
   }, [savedKey]);
 
   // البروفايلات
@@ -159,6 +198,7 @@ export function SettingsTab() {
     try {
       const st = useExtractorStore.getState().settings;
       const items: { id: string; base_url: string; api_key?: string }[] = [];
+      // أولًا المزودات المدمجة
       for (const p of PROVIDERS) {
         const key = getProviderKey(st, p.id);
         if (p.id === "custom") {
@@ -169,16 +209,32 @@ export function SettingsTab() {
         }
         if (p.id === st.provider) {
           // النشط يُفحص دائماً — حتى بلا مفتاح (لكشف الحظر الجغرافي مبكراً)
-          items.push({
-            id: p.id,
-            base_url: st.baseUrl.trim() || p.baseUrl,
-            api_key: key || undefined,
-          });
+            items.push({
+              id: p.id,
+              base_url: st.baseUrl.trim() || p.baseUrl,
+              api_key: key || undefined,
+            });
         } else if (key) {
           // مزود آخر: يُفحص فقط إن امتلك مفتاحه الخاص
-          items.push({ id: p.id, base_url: p.baseUrl, api_key: key });
+            items.push({ id: p.id, base_url: p.baseUrl, api_key: key });
         } else if (p.id === "ollama") {
           items.push({ id: p.id, base_url: p.baseUrl });
+        }
+      }
+      // ثانيًا المزودات المخصصة
+      for (const cp of st.customProviders) {
+        const key = getProviderKey(st, cp.id);
+        // إذا كان المزود المخصص هو النشط ولديه base_url، افحصه
+        if (cp.id === st.provider && st.baseUrl.trim()) {
+          items.push({ id: cp.id, base_url: st.baseUrl.trim(), api_key: key || undefined });
+        }
+        // إذا كان مزودًا مخصصًا غير نشط لكنه يملك مفتاحًا محفوظًا، افحصه برابطه الخاص
+        else if (key && cp.baseUrl.trim()) {
+          items.push({ id: cp.id, base_url: cp.baseUrl.trim(), api_key: key });
+        }
+        // Ollama المحلي لا يحتاج مفتاح، افحصه دائمًا (مع افتراض أنه Ollama)
+        else if (cp.id === "ollama") {
+          items.push({ id: cp.id, base_url: cp.baseUrl });
         }
       }
       if (items.length === 0) return null;
@@ -240,7 +296,7 @@ export function SettingsTab() {
   }, [setKb]);
 
   useEffect(() => {
-    void refreshKb();
+    setTimeout(() => { void refreshKb(); }, 0);
   }, [refreshKb]);
 
   // ---------- جلب النماذج ----------
@@ -306,21 +362,34 @@ export function SettingsTab() {
 
   const onProviderChange = (id: string) => {
     const p = PROVIDERS.find((x) => x.id === id);
+    const cp = (settings.customProviders || []).find((x) => x.id === id);
     setSettings({
       provider: id,
-      baseUrl: p && id !== "custom" ? p.baseUrl : "",
+      baseUrl: (p && id !== "custom") ? p.baseUrl : (cp ? cp.baseUrl : ""),
     });
   };
 
   // ---------- حفظ / فحص مفتاح المزود النشط (تخصيص المفاتيح) ----------
-  const onSaveKey = () => {
+  const onSaveKey = async () => {
     const v = keyDraft.trim();
+    if (v) {
+      // التحقق من أن المفتاح صالح لهذا المزود قبل الحفظ
+      const url = settings.baseUrl.trim() || currentProvider.baseUrl;
+      try {
+        const validation = await validateProviderKey(settings.provider, v, url);
+        if (!validation.valid) {
+          toast.error(validation.errorAr || `المفتاح لا يعمل مع ${currentProvider.name_ar}`);
+          return;
+        }
+      } catch {
+        toast.warning("تعذر التحقق من المفتاح — سيتم الحفظ لكنه قد لا يعمل");
+      }
+    }
     setSettings({
       providerKeys: { ...(settings.providerKeys ?? {}), [settings.provider]: v },
     });
     if (v) {
-      toast.success(`حُفظ مفتاح ${currentProvider.name_ar} — مخصص لهذا المزود فقط`);
-      // بعد الحفظ اجلب نماذج هذا المزود مباشرة بالمفتاح الجديد الموثوق
+      toast.success(`حُفظ مفتاح ${currentProvider.name_ar} ✓ تم التحقق`);
       if (settings.baseUrl.trim()) void doFetchModels();
     } else {
       toast.info(`أُزيل مفتاح ${currentProvider.name_ar}`);
@@ -372,6 +441,40 @@ export function SettingsTab() {
     }
   };
 
+  const onCheckQuota = async () => {
+    const url =
+      settings.baseUrl.trim() ||
+      (currentProvider.id !== "custom" ? currentProvider.baseUrl : "");
+    if (!url) {
+      toast.warning("أدخل base_url أولاً ثم افحص الرصيد");
+      return;
+    }
+    const keyToCheck = keyDraft.trim() || savedKey;
+    if (!keyToCheck) {
+      toast.warning("أدخل المفتاح أولاً ثم افحص الرصيد");
+      return;
+    }
+    setQuotaChecking(true);
+    setQuota(null);
+    try {
+      const q = await providerQuota(url, keyToCheck);
+      setQuota(q);
+      if (q.exhausted) {
+        toast.warning(`⚠️ الرصيد ${currentProvider.name_ar} مستنزف — ${q.error_ar ?? ""}`);
+      } else if (q.status === "active" && q.remaining !== null) {
+        toast.success(`الرصيد المتبقي لدى ${currentProvider.name_ar}: ${q.remaining}`);
+      } else if (q.status === "unlimited") {
+        toast.success(q.error_ar ?? "لا توجد حصة محدودة");
+      } else {
+        toast.info(q.error_ar ?? "تعذر فحص الرصيد");
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "فشل فحص الرصيد");
+    } finally {
+      setQuotaChecking(false);
+    }
+  };
+
   // حارس اتساق النموذج مع المزود: عند التبديل قد يبقى نموذج المزود السابق مختاراً —
   // إن لم يعد ضمن قائمة المزود الحالي يُختار تلقائياً أول نموذج (مجاني رؤيوي أولاً)
   // — يمنع أخطاء «فشل غير متوقع» عند إرسال اسم نموذج لا يعرفه المزود الجديد
@@ -394,12 +497,13 @@ export function SettingsTab() {
   // 15.10.4 الترتيب الإقليمي: المتاح فعلياً (available=true) أولاً، ثم غير المفحوص، ثم غير المتاح أخيراً.
   // لا يختفي أي مزود — المحظور يُدفع للأسفل بشارة 🔴 (قد يعمل لاحقاً أو بشبكة مختلفة).
   const sortedProviders = (() => {
+    const allProviders = [...PROVIDERS, ...currentCustomProviders];
     const rank = (id: string): number => {
       const st = providerStatuses[id];
       if (!st) return 1; // غير مفحوص
       return st.available ? 0 : 2;
     };
-    return [...PROVIDERS].sort((a, b) => rank(a.id) - rank(b.id));
+    return allProviders.sort((a, b) => rank(a.id) - rank(b.id));
   })();
 
   const activeStatus = providerStatuses[settings.provider];
@@ -560,6 +664,47 @@ export function SettingsTab() {
                     </span>
                   )}
                 </div>
+                <div className="text-[11px] text-muted-foreground flex items-center gap-2 mt-1">
+                  {quota && (
+                    <>
+                      {quota.exhausted ? (
+                        <span className="text-destructive font-medium">🔴 الرصيد مستنزف</span>
+                      ) : quota.status === "active" && quota.remaining !== null ? (
+                        <span>🟢 المتبقي: <b>{quota.remaining}</b>{quota.limit !== null && ` / ${quota.limit}`}</span>
+                      ) : quota.status === "unlimited" ? (
+                        <span>🟢 بلا حد — مزود محلي</span>
+                      ) : quota.status === "unsupported" ? (
+                        <span className="text-muted-foreground">يراجع لوحة التحكم للرصيد</span>
+                      ) : (
+                        <span>{quota.error_ar || "حالة غير معروفة"}</span>
+                      )}
+                    </>
+                  )}
+                  {!quota && !quotaChecking && keyDraft.trim() && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="min-h-9"
+                      onClick={() => void onCheckQuota()}
+                      title="يتحقق من الرصيد/الحصة المتاحة لدى هذا المزود"
+                    >
+                      <Wallet className="h-4 w-4 me-1" aria-hidden /> فحص الرصيد
+                    </Button>
+                  )}
+                  {quotaChecking && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="min-h-9"
+                      disabled
+                      title="يتحقق من الرصيد/الحصة المتاحة لدى هذا المزود"
+                    >
+                      <Loader2 className="h-3 w-3 me-1 animate-spin" aria-hidden /> جاري الفحص...
+                    </Button>
+                  )}
+                </div>
                 <p className="text-[11px] text-muted-foreground leading-relaxed">
                   كل مزود له <b>مفتاحه الخاص</b> — ما تحفظه هنا يخص «{currentProvider.name_ar}»
                   فقط ولا يُعرض ولا يُرسل عند التبديل إلى مزود آخر. المفاتيح في متصفحك فقط.
@@ -682,6 +827,226 @@ export function SettingsTab() {
               <p className="text-xs text-muted-foreground">
                 النموذج المختار: <span className="font-mono" dir="ltr">{settings.model}</span>
               </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* 15.11 إدارة مزودي المخصصين */}
+      <Card className="lg:col-span-2">
+        <CardContent className="p-4 space-y-4">
+          <h3 className="font-bold flex items-center gap-1">
+            <Cog className="h-4 w-4 text-primary" /> مزودي المخصصين
+          </h3>
+          {currentCustomProviders.length === 0 && (
+            <p className="text-muted-foreground text-sm">
+              لا يوجد مزودو مخصصون بعد. يمكنك إضافة مزود جديد من أسفل.
+            </p>
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <Label>اسم المزود (العربية)</Label>
+              <Input
+                value={editingCustomProviderId ? editingCustomProvider.name_ar : newCustomProvider.name_ar}
+                onChange={(e) => {
+                  if (editingCustomProviderId) {
+                    setEditingCustomProvider({ ...editingCustomProvider, name_ar: e.target.value });
+                  } else {
+                    setNewCustomProvider({ ...newCustomProvider, name_ar: e.target.value });
+                  }
+                }}
+                className="min-h-11"
+                dir="rtl"
+              />
+            </div>
+            <div>
+              <Label>الرابط (base_url)</Label>
+              <Input
+                value={editingCustomProviderId ? editingCustomProvider.baseUrl : newCustomProvider.baseUrl}
+                onChange={(e) => {
+                  if (editingCustomProviderId) {
+                    setEditingCustomProvider({ ...editingCustomProvider, baseUrl: e.target.value });
+                  } else {
+                    setNewCustomProvider({ ...newCustomProvider, baseUrl: e.target.value });
+                  }
+                }}
+                placeholder="https://…/v1"
+                className="min-h-11"
+              />
+              <p className="text-xs text-muted-foreground">
+                الرابط الجذري للمثيل API — لا يشمل نقطة نهاية (endpoint).
+              </p>
+            </div>
+          </div>
+
+          {/* switch needs_key */}
+          <div className="flex items-center gap-2">
+            <Switch
+              id="needs-key"
+              checked={editingCustomProviderId ? editingCustomProvider.needsKey : newCustomProvider.needsKey}
+              onCheckedChange={(v) => {
+                if (editingCustomProviderId) {
+                  setEditingCustomProvider({ ...editingCustomProvider, needsKey: v });
+                } else {
+                  setNewCustomProvider({ ...newCustomProvider, needsKey: v });
+                }
+              }}
+            />
+            <Label htmlFor="needs-key" className="text-sm cursor-pointer">
+              يحتاج إلى مفتاح API
+            </Label>
+          </div>
+
+          {/* API key input - shows when needsKey is true */}
+          {(editingCustomProviderId ? editingCustomProvider.needsKey : newCustomProvider.needsKey) && (
+            <div className="space-y-1.5">
+              <Label htmlFor="custom-api-key">مفتاح API</Label>
+              <Input
+                id="custom-api-key"
+                type="password"
+                value={editingCustomProviderId ? editingCustomProvider.apiKey : newCustomProvider.apiKey}
+                onChange={(e) => {
+                  if (editingCustomProviderId) {
+                    setEditingCustomProvider({ ...editingCustomProvider, apiKey: e.target.value });
+                  } else {
+                    setNewCustomProvider({ ...newCustomProvider, apiKey: e.target.value });
+                  }
+                }}
+                placeholder="sk-…"
+                dir="ltr"
+                className="min-h-11"
+              />
+            </div>
+          )}
+
+{/* Action buttons: add / edit */}
+          <div className="flex gap-2 flex-wrap">
+            <Button
+              variant="default"
+              size="sm"
+              className="min-h-11"
+              onClick={() => {
+                if (editingCustomProviderId) {
+                  // Save edit
+                  updateCustomProvider(editingCustomProviderId, {
+                    name_ar: editingCustomProvider.name_ar,
+                    baseUrl: editingCustomProvider.baseUrl,
+                    needsKey: editingCustomProvider.needsKey,
+                  });
+                  if (editingCustomProvider.needsKey) {
+                    const cp = settings.customProviders?.find((x) => x.id === editingCustomProviderId);
+                    const currentKey = cp ? getProviderKey(settings, cp.id) : "";
+                    const nextKey = editingCustomProvider.apiKey.trim() || currentKey;
+                    if (nextKey) {
+                      setSettings({
+                        providerKeys: { ...(settings.providerKeys ?? {}), [editingCustomProviderId]: nextKey },
+                      });
+                    } else {
+                      const { [editingCustomProviderId]: _, ...rest } = settings.providerKeys ?? {};
+                      setSettings({ providerKeys: rest });
+                    }
+                  } else {
+                    const { [editingCustomProviderId]: _, ...rest } = settings.providerKeys ?? {};
+                    setSettings({ providerKeys: rest });
+                  }
+                } else {
+                  // Add new
+                  const newId = `custom_${Date.now()}`;
+                  addCustomProvider({
+                    id: newId,
+                    name_ar: newCustomProvider.name_ar,
+                    baseUrl: newCustomProvider.baseUrl,
+                    needsKey: newCustomProvider.needsKey,
+                  });
+                  if (newCustomProvider.needsKey && newCustomProvider.apiKey.trim()) {
+                    setSettings({
+                      providerKeys: { ...(settings.providerKeys ?? {}), [newId]: newCustomProvider.apiKey.trim() },
+                    });
+                  }
+                }
+                setEditingCustomProviderId(null);
+                setEditingCustomProvider({
+                  name_ar: "",
+                  baseUrl: "",
+                  needsKey: false,
+                  apiKey: "",
+                });
+                setNewCustomProvider({
+                  name_ar: "",
+                  baseUrl: "",
+                  needsKey: false,
+                  apiKey: "",
+                });
+              }}
+            >
+              {editingCustomProviderId ? "حفظ التعديلات" : "إضافة مزود"}
+            </Button>
+            {editingCustomProviderId && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="min-h-11"
+                onClick={() => {
+                  setEditingCustomProviderId(null);
+                  setEditingCustomProvider({
+                    name_ar: "",
+                    baseUrl: "",
+                    needsKey: false,
+                    apiKey: "",
+                  });
+                }}
+              >
+                إلغاء
+              </Button>
+            )}
+          </div>
+
+          {/* قائمة الموفرات المخصصة الحالية */}
+          {currentCustomProviders.length > 0 && (
+            <div className="mt-4 space-y-2 max-h-40 overflow-auto custom-scroll">
+              {currentCustomProviders.map((cp) => (
+                <div
+                  key={cp.id}
+                  className="flex items-center justify-between p-3 border rounded bg-muted/50"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm">{cp.name_ar}</span>
+                    {cp.needsKey && (
+                      <span className="text-xs text-primary">
+                        ✓ يحتاج مفتاح
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex gap-1">
+                    <Button
+                      size="icon"
+                      variant="outline"
+                      className="min-h-9 w-9 h-9 p-0"
+                      onClick={() => {
+                        setEditingCustomProviderId(cp.id);
+                        setEditingCustomProvider({
+                          name_ar: cp.name_ar,
+                          baseUrl: cp.baseUrl,
+                          needsKey: cp.needsKey,
+                          apiKey: getProviderKey(useExtractorStore.getState().settings, cp.id),
+                        });
+                      }}
+                      aria-label="تعديل المزود"
+                    >
+                      <Edit2 className="h-4 w-4" aria-hidden />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="destructive"
+                      className="min-h-9 w-9 h-9 p-0"
+                      onClick={() => removeCustomProvider(cp.id)}
+                      aria-label="حذف المزود"
+                    >
+                      <Trash2 className="h-4 w-4" aria-hidden />
+                    </Button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </CardContent>

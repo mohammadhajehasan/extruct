@@ -17,6 +17,10 @@ node_modules
 /.next/
 /out/
 
+# generated artifacts
+screenshot*.png
+test_browser.py
+
 # production
 /build
 

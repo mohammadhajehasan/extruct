@@ -23,22 +23,31 @@ An AI-powered data extraction system for images and PDFs (Vision + LLM), with hu
 ## التشغيل / Getting Started
 
 ```bash
-# 1) تثبيت الحزم
-bun install
+# 1) تثبيت الحزم (npm يعمل على Windows — bun غير مطلوب)
+npm install            # أو: bun install
 
-# 2) قاعدة البيانات
-bun run db:push
+# 2) قاعدة البيانات (اختياري: الواجهة لا تستدعي Prisma وقت التشغيل)
+npm run db:push
 
 # 3) خدمة الاستخراج (FastAPI على المنفذ 8000)
 cd mini-services/py-extractor
-pip install -r requirements.txt   # أو: openai python-multipart fastapi uvicorn
-uvicorn main:app --host 0.0.0.0 --port 8000
+pip install -r requirements.txt
+python -m uvicorn main:app --host 0.0.0.0 --port 8000
+# أو من جذر المشروع:  npm run dev:py   (Windows)
 
 # 4) الواجهة (منفذ 3000)
-bun run dev
+npm run dev
 ```
 
 الأدوار عبر الوكيل: `/api/py/*` → `localhost:8000`
+
+### Windows — ملاحظات تشغيل ملزمة
+
+- **لا تستخدم `| tee dev.log` ولا صيغة `VAR=value cmd` في سكربتات npm**: على Windows يكون صدفة npm هي `cmd.exe` حيث `tee` غير موجود وصيغة المتغيرات غير مدعومة، فيتعطّل السكربت.
+- لذلك يعتمد `npm run dev` على `scripts/dev.js` و`npm start` على `scripts/start-web.js` (يمرّران الخرج إلى الطرفية وإلى `dev.log`/`server.log` معاً عبر Node، وتعمل على Windows و Linux/macOS).
+- `npm start` يحتاج بناءً أولاً: `npm run build` ثم `npm start` (يقرأ `.next/standalone/server.js`).
+- تحقق سريع: `http://localhost:3000` للواجهة و`http://127.0.0.1:8000/api/health` للخدمة، والوكيل عبر `http://localhost:3000/api/py/health`.
+- القدرات الاختيارية: OCR يحتاج Tesseract مثبتاً على النظام، والباركود يحتاج DLL الخاصة بـ zbar. عند غيابها يظهر `capabilities: { ocr:false, barcode:false }` في نقطة الصحة ويبقى النظام يعمل.
 
 ## الإعداد / Configuration
 

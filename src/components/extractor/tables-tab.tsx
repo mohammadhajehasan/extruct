@@ -34,7 +34,6 @@ import { CsvGrid } from "./csv-grid";
 import { ImageQueue } from "./image-queue";
 import { useExtractorStore, parseCsvSimple } from "@/lib/extractor/store";
 import { getExtractB64, getEnhanceB64 } from "@/lib/extractor/imaging";
-import { mapPool } from "@/lib/extractor/pool";
 import { smartExtract, failoverNotice, showExtractError } from "@/lib/extractor/failover";
 import {
   parsePdf,
@@ -53,10 +52,11 @@ export function TablesTab() {
   const tableResults = useExtractorStore((s) => s.tableResults);
   const addTableResult = useExtractorStore((s) => s.addTableResult);
   const removeTableResult = useExtractorStore((s) => s.removeTableResult);
-  const addReviewItems = useExtractorStore((s) => s.addReviewItems);
-  const settings = useExtractorStore((s) => s.settings);
+   const addReviewItems = useExtractorStore((s) => s.addReviewItems);
+   const addFailure = useExtractorStore((s) => s.addFailure);
+   const settings = useExtractorStore((s) => s.settings);
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+      const [selectedId, setSelectedId] = useState<string | null>(null);
   const [enhancingId, setEnhancingId] = useState<string | null>(null);
   const [extractingId, setExtractingId] = useState<string | null>(null);
   const [pdfParsing, setPdfParsing] = useState(false);
@@ -65,6 +65,8 @@ export function TablesTab() {
   const [merging, setMerging] = useState(false);
   const [merged, setMerged] = useState<{ headers: string[]; rows: string[][]; removed: number } | null>(null);
   const [exporting, setExporting] = useState<string | null>(null);
+
+  const [mergeMultipleImages, setMergeMultipleImages] = useState(false);
 
   const selected = images.find((i) => i.id === selectedId) ?? null;
 
@@ -178,9 +180,47 @@ export function TablesTab() {
     }
   };
 
-  // ---------- الاستخراج ----------
-  // silent: داخل الدفعة المتوازية — لا يلمس extractingId (مؤشر الصف المفرد)
+// ---------- الاستخراج ----------
+  // silent: داخل الدفعة المتوازية — لا يلمس extractingId (=path indicator)
   const doExtract = async (imageId: string, opts?: { silent?: boolean }) => {
+    // عند تفعيل "جميع الصور = جدول واحد": نستخرج كل الصور المعلقة كجدول واحد
+    if (mergeMultipleImages) {
+      const pending = images.filter((i) => !tableResults.some((t) => t.imageId === i.id));
+      if (pending.length === 0) {
+        toast.info("كل الصور مستخرجة مسبقاً");
+        return;
+      }
+      if (!opts?.silent) setExtractingId(imageId);
+      try {
+        const b64s = await Promise.all(pending.map((item) => getExtractB64(item)));
+        const res = await smartExtract({ mode: "tables", imagesB64: b64s, merge: true });
+        const csv = cleanCsvText(res.text);
+        if (!csv || csv.trim() === "-" || csv.trim() === "") {
+          throw new Error("النتيجة المستخرجة غير valide (نص غير CSV)");
+        }
+        const grid = parseCsvSimple(csv);
+        const resultId = `tbl_merged_${Date.now().toString(36)}`;
+        addTableResult({
+          id: resultId,
+          imageId: "merged_all",
+          imageName: `دمج ${pending.length} صورة (جدول واحد)`,
+          imageDataUrl: pending[0]?.dataUrl,
+          csv,
+          rows: grid.length,
+          model: res.model,
+          elapsed_ms: res.elapsed_ms,
+        });
+        toast.success(`استخراج مدمج مكتمل: ${grid.length} صف بـ${res.elapsed_ms}ms من ${pending.length} صورة كجدول واحد`);
+        const notice = failoverNotice(res);
+        if (notice) toast.warning(notice);
+      } catch (e) {
+        showExtractError(e, { fallback: "فشل الاستخراج المدمج" });
+      } finally {
+        if (!opts?.silent) setExtractingId(null);
+      }
+      return;
+    }
+
     const item = images.find((i) => i.id === imageId);
     if (!item) return;
     if (!opts?.silent) setExtractingId(imageId);
@@ -190,14 +230,20 @@ export function TablesTab() {
       const res = await smartExtract({
         mode: "tables",
         imagesB64: [b64],
+        merge: false,
       });
       const csv = cleanCsvText(res.text);
+      // تحقق من أن النتيجة ليست فارغة أو مجرد "-"
+      if (!csv || csv.trim() === "-" || csv.trim() === "") {
+        throw new Error("النتيجة المستخرجة غير صالحة (نص غير CSV)");
+      }
       const grid = parseCsvSimple(csv);
       const resultId = `tbl_${imageId}_${Date.now().toString(36)}`;
       addTableResult({
         id: resultId,
         imageId,
         imageName: item.name,
+        imageDataUrl: item.dataUrl,
         csv,
         rows: grid.length,
         model: res.model,
@@ -232,27 +278,114 @@ export function TablesTab() {
       // 15.10.5: نجاح بعد حلقات فاشلة — تنبيه التراجع التلقائي
       const notice = failoverNotice(res);
       if (notice) toast.warning(notice);
-    } catch (e) {
-      // 15.10.2: رسالة مفصلة حسب نوع الخطأ (لا رسالة عامة)
-      showExtractError(e, { fallback: "فشل الاستخراج" });
-    } finally {
-      if (!opts?.silent) setExtractingId(null);
-    }
+} catch (e) {
+       // 15.10.2: رسالة مفصلة حسب نوع الخطأ (لا رسالة عامة)
+       showExtractError(e, { fallback: "فشل الاستخراج" });
+       
+       // حفظ الفشل في قائمة الأفلاس
+       if (item) {
+         const errorAr = e instanceof Error ? e.message : String(e);
+         // استخراج رسالة عربية أكثر تفصيلاً إذا كان خطأ مصنف
+         let errorDetailAr: string | undefined;
+         if (e instanceof Error && e.name === "PyApiError") {
+           // This is a PyApiError, try to get error_ar from it
+           // We'll use the generic message for now, could be enhanced
+           errorDetailAr = errorAr;
+         }
+         addFailure({
+           imageId: imageId,
+           mode: "tables",
+           error: errorAr,
+           error_ar: errorDetailAr,
+           timestamp: Date.now()
+         });
+       }
+     } finally {
+       if (!opts?.silent) setExtractingId(null);
+     }
   };
 
-  // دفعة متوازية بعدد المسارات من الإعدادات — تقلّص الزمن الكلي دون إغراق المزود
+  // دفعة متوازية — مجموعات حسب sourceFile (نفس الملف = جدول واحد)
+  // When mergeMultipleImages is enabled, ALL images are extracted as one table.
+  // Otherwise, images are grouped by sourceFile — each file produces one table.
   const extractAll = async () => {
     const pending = images.filter((i) => !tableResults.some((t) => t.imageId === i.id));
     if (pending.length === 0) {
       toast.info("كل الصور مستخرجة مسبقاً");
       return;
     }
-    setBatchTotal(pending.length);
+
+    if (mergeMultipleImages) {
+      // Extract all images together as one combined table
+      setBatchTotal(1);
+      setBatchDone(0);
+      try {
+const b64s = await Promise.all(pending.map((item) => getExtractB64(item)));
+        const res = await smartExtract({ mode: "tables", imagesB64: b64s, merge: true });
+        const csv = cleanCsvText(res.text);
+        if (!csv || csv.trim() === "-" || csv.trim() === "") {
+          throw new Error("النتيجة المستخرجة غير صالح (نص غير CSV)");
+        }
+        const grid = parseCsvSimple(csv);
+        const resultId = `tbl_merged_${Date.now().toString(36)}`;
+        addTableResult({
+          id: resultId,
+          imageId: "merged_all",
+          imageName: `دمج ${pending.length} صورة (جدول واحد)`,
+          imageDataUrl: pending[0]?.dataUrl,
+          csv,
+          rows: grid.length,
+          model: res.model,
+          elapsed_ms: res.elapsed_ms,
+        });
+        toast.success(`استخراج مدمج مكتمل: ${grid.length} صف بـ${res.elapsed_ms}ms من ${pending.length} صورة كجدول واحد`);
+        const notice = failoverNotice(res);
+        if (notice) toast.warning(notice);
+      } catch (e) {
+        showExtractError(e, { fallback: "فشل الاستخراج المدمج" });
+      } finally {
+        setBatchTotal(0);
+        setBatchDone(0);
+      }
+      return;
+    }
+
+    // Group by sourceFile — each group extracted as one table
+    const groups = new Map<string, typeof pending>();
+    for (const item of pending) {
+      const key = item.sourceFile || item.id;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(item);
+    }
+
+    const groupArray = Array.from(groups.values());
+    setBatchTotal(groupArray.length);
     setBatchDone(0);
-    await mapPool(pending, useExtractorStore.getState().settings.concurrency, async (item) => {
-      await doExtract(item.id, { silent: true });
+
+    for (const group of groupArray) {
+      try {
+        const b64s = await Promise.all(group.map((item) => getExtractB64(item)));
+        const res = await smartExtract({ mode: "tables", imagesB64: b64s });
+        const csv = cleanCsvText(res.text);
+        if (!csv || csv.trim() === "-" || csv.trim() === "") continue;
+        const grid = parseCsvSimple(csv);
+        const resultId = `tbl_group_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+        const groupName = group[0]?.sourceFile || group[0]?.name || "مجموعة";
+        addTableResult({
+          id: resultId,
+          imageId: group[0]?.id || "",
+          imageName: group.length > 1 ? `${groupName} (${group.length} صفحات)` : groupName,
+          imageDataUrl: group[0]?.dataUrl,
+          csv,
+          rows: grid.length,
+          model: res.model,
+          elapsed_ms: res.elapsed_ms,
+        });
+      } catch (e) {
+        showExtractError(e, { fallback: "فشل الاستخراج" });
+      }
       setBatchDone((d) => d + 1);
-    });
+    }
     setBatchTotal(0);
     setBatchDone(0);
   };
@@ -343,6 +476,22 @@ export function TablesTab() {
                 </span>
               </div>
             )}
+            <div className="flex items-center gap-2 px-3 py-2 rounded-md border bg-muted/30">
+              <input
+                type="checkbox"
+                id="mergeMultipleImages"
+                checked={mergeMultipleImages}
+                onChange={(e) => setMergeMultipleImages(e.target.checked)}
+                className="h-4 w-4"
+              />
+              <label
+                htmlFor="mergeMultipleImages"
+                className="text-xs text-muted-foreground cursor-pointer select-none"
+                title="عند التفعيل: جميع الصور المرفقة تُعتبر جدولًا واحدًا (ليست جدولًا منفصلًا لكل صورة)"
+              >
+                جميع الصور = جدول واحد
+              </label>
+            </div>
             <Button
               size="sm"
               className="min-h-11 bg-primary hover:bg-primary/90 text-white"
@@ -451,9 +600,18 @@ export function TablesTab() {
               <CardContent className="p-4 space-y-3">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div className="min-w-0">
-                    <p className="font-bold text-sm truncate" title={t.imageName}>
-                      {t.imageName}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      {t.imageDataUrl && (
+                        <img
+                          src={t.imageDataUrl}
+                          alt={t.imageName}
+                          className="h-10 w-10 object-cover rounded border"
+                        />
+                      )}
+                      <p className="font-bold text-sm truncate" title={t.imageName}>
+                        {t.imageName}
+                      </p>
+                    </div>
                     <div className="flex items-center gap-2 flex-wrap mt-1">
                       {t.native && (
                         <Badge className="bg-primary/15 text-primary border border-primary/40">

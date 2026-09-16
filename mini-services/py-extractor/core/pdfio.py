@@ -63,15 +63,16 @@ def pdf_pages_from_bytes(data: bytes, dpi: int = DEFAULT_DPI) -> list:
     with fitz.open(stream=data, filetype="pdf") as doc:
         for i, pg in enumerate(doc):
             text = pg.get_text().strip()
-            # تحسين الأداء: find_tables يُستخدم فقط للصفحات النصية — تخطّيه
-            # على الصفحات الممسوحة (بلا نص) يوفّر ~0.3-1s لكل صفحة بلا أي تأثير
+            # 15.9.1 — مرشّح رخيص قبل find_tables() المكلف: جدول PDF حقيقي يحتاج
+            # رسومات متجهة كافية؛ صفحة مسح + OCR نصي تُستبعد فوراً.
             tables = []
-            if text:
+            has_enough_drawings = len(pg.get_drawings()) >= 4
+            if text and has_enough_drawings:
                 try:
                     tables = pg.find_tables().tables
                 except Exception:
                     tables = []
-            if text and tables:
+            if text and has_enough_drawings and tables:
                 native = []
                 for t in tables:
                     try:

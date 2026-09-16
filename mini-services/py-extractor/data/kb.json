@@ -17,6 +17,96 @@
    "context": "",
    "count": 1,
    "ts": "2026-09-08T20:37:04"
+  },
+  {
+   "scope": "mechanic",
+   "field": "plate_no",
+   "wrong": "3100003141",
+   "right": "كرت ميكانيك",
+   "context": "",
+   "count": 1,
+   "ts": "2026-09-13T04:02:10"
+  },
+  {
+   "scope": "mechanic",
+   "field": "plate_no",
+   "wrong": "كرت ميكانيك",
+   "right": "19/38941",
+   "context": "",
+   "count": 1,
+   "ts": "2026-09-13T04:02:52"
+  },
+  {
+   "scope": "mechanic",
+   "field": "fuel",
+   "wrong": "ديزل",
+   "right": "بنزين",
+   "context": "",
+   "count": 1,
+   "ts": "2026-09-13T04:03:18"
+  },
+  {
+   "scope": "mechanic",
+   "field": "governorate",
+   "wrong": "حديقة",
+   "right": "-",
+   "context": "",
+   "count": 1,
+   "ts": "2026-09-13T04:48:35"
+  },
+  {
+   "scope": "mechanic",
+   "field": "passengers",
+   "wrong": "10/1",
+   "right": "1",
+   "context": "",
+   "count": 1,
+   "ts": "2026-09-14T00:21:50"
+  },
+  {
+   "scope": "mechanic",
+   "field": "engine_capacity",
+   "wrong": "2400DH-CE",
+   "right": "6805",
+   "context": "",
+   "count": 1,
+   "ts": "2026-09-14T00:22:14"
+  },
+  {
+   "scope": "mechanic",
+   "field": "fuel",
+   "wrong": "ديزل",
+   "right": "مازوت",
+   "context": "",
+   "count": 1,
+   "ts": "2026-09-14T00:25:23"
+  },
+  {
+   "scope": "mechanic",
+   "field": "governorate",
+   "wrong": "250",
+   "right": "-",
+   "context": "",
+   "count": 1,
+   "ts": "2026-09-14T00:39:38"
+  },
+  {
+   "scope": "mechanic",
+   "field": "chassis_no",
+   "wrong": "PROBE-WRONG",
+   "right": "PROBE-RIGHT",
+   "context": "probe",
+   "count": 1,
+   "ts": "2026-09-16T03:13:12"
+  },
+  {
+   "scope": "mechanic",
+   "field": "chassis_no",
+   "wrong": "VERIFY-WRONG",
+   "right": "VERIFY-RIGHT",
+   "context": "final_verify",
+   "count": 2,
+   "ts": "2026-09-16T03:30:19"
   }
  ],
  "chains": [
@@ -102,6 +192,86 @@
    ],
    "score": 0.8,
    "ts": "2026-09-09T08:29:40"
+  },
+  {
+   "scope": "tables",
+   "chain": [
+    "upscale",
+    "gray",
+    "shadow",
+    "clahe",
+    "close",
+    "micro",
+    "stretch"
+   ],
+   "score": 1.0,
+   "ts": "2026-09-16T03:13:10"
+  },
+  {
+   "scope": "tables",
+   "chain": [
+    "upscale",
+    "gray",
+    "shadow",
+    "clahe",
+    "close",
+    "micro",
+    "stretch"
+   ],
+   "score": 1.0,
+   "ts": "2026-09-16T03:15:56"
+  },
+  {
+   "scope": "tables",
+   "chain": [
+    "upscale",
+    "gray",
+    "shadow",
+    "clahe",
+    "close",
+    "micro",
+    "stretch"
+   ],
+   "score": 1.0,
+   "ts": "2026-09-16T03:25:47"
+  },
+  {
+   "scope": "tables",
+   "chain": [
+    "gray",
+    "shadow60",
+    "clahe_micro",
+    "close",
+    "stretch"
+   ],
+   "score": 1.0,
+   "ts": "2026-09-16T03:25:47"
+  },
+  {
+   "scope": "tables",
+   "chain": [
+    "upscale",
+    "gray",
+    "shadow",
+    "clahe",
+    "close",
+    "micro",
+    "stretch"
+   ],
+   "score": 1.0,
+   "ts": "2026-09-16T03:29:16"
+  },
+  {
+   "scope": "tables",
+   "chain": [
+    "gray",
+    "shadow60",
+    "clahe_micro",
+    "close",
+    "stretch"
+   ],
+   "score": 1.0,
+   "ts": "2026-09-16T03:29:17"
   }
  ]
 }

@@ -53,7 +53,9 @@ export function BenchmarkTab() {
     if (selectedModels.length === 0 && models.length > 0) {
       const freeVision = models.filter((m) => m.free && m.vision).map((m) => m.name);
       const def = freeVision.slice(0, 2);
-      if (def.length > 0) setSelectedModels(def);
+      if (def.length > 0) {
+        setTimeout(() => setSelectedModels(def), 0);
+      }
     }
   }, [models, selectedModels.length]);
 

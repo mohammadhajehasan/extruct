@@ -113,14 +113,14 @@ export function ReviewTab() {
     }
   };
 
-  const imageFor = (imageId?: string, recordId?: string) => {
+  const imageFor = (imageId?: string, recordId?: string): string | string[] | null => {
     if (imageId) {
       const img = images.find((i) => i.id === imageId);
       if (img) return img.previewUrl ?? img.dataUrl;
     }
     if (recordId) {
       const rec = mechanicRecords.find((r) => r.id === recordId);
-      if (rec && rec.faces.length > 0) return rec.faces[0];
+      if (rec && rec.faces.length > 0) return rec.faces;
     }
     return null;
   };
@@ -244,12 +244,26 @@ export function ReviewTab() {
                         className="w-full accent-primary"
                       />
                       <div className="max-h-56 overflow-auto custom-scroll rounded-lg border bg-white dark:bg-zinc-900">
-                                          <img
-                          src={imgSrc}
-                          alt={`صورة المراجعة — ${item.label}`}
-                          style={{ transform: `scale(${z})`, transformOrigin: "top center" }}
-                          className="w-full object-contain"
-                        />
+                        {Array.isArray(imgSrc) ? (
+                          <div className="flex flex-col gap-2 p-2">
+                            {imgSrc.map((src, i) => (
+                              <img
+                                key={i}
+                                src={src}
+                                alt={`صورة المراجعة ${i + 1} — ${item.label}`}
+                                style={{ transform: `scale(${z})`, transformOrigin: "top center" }}
+                                className="w-full object-contain rounded"
+                              />
+                            ))}
+                          </div>
+                        ) : (
+                          <img
+                            src={imgSrc}
+                            alt={`صورة المراجعة — ${item.label}`}
+                            style={{ transform: `scale(${z})`, transformOrigin: "top center" }}
+                            className="w-full object-contain"
+                          />
+                        )}
                       </div>
                     </div>
                   )}

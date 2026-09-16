@@ -17,12 +17,17 @@ import {
   BarChart3,
   Wifi,
   WifiOff,
+  AlertTriangle,
 } from "lucide-react";
+import { Info, Phone } from "lucide-react";
 import { TablesTab } from "@/components/extractor/tables-tab";
 import { MechanicTab } from "@/components/extractor/mechanic-tab";
 import { BenchmarkTab } from "@/components/extractor/benchmark-tab";
 import { ReviewTab } from "@/components/extractor/review-tab";
 import { SettingsTab } from "@/components/extractor/settings-tab";
+import { FailuresTab } from "@/components/extractor/failures-tab";
+import { InfoTab } from "@/components/extractor/info-tab";
+import { ContactTab } from "@/components/extractor/contact-tab";
 import { useExtractorStore } from "@/lib/extractor/store";
 import { getHealth } from "@/lib/extractor/api";
 
@@ -61,6 +66,7 @@ export default function Home() {
   const health = useExtractorStore((s) => s.health);
   const setHealth = useExtractorStore((s) => s.setHealth);
   const reviewCount = useExtractorStore((s) => s.reviewQueue.length);
+  const failuresCount = useExtractorStore((s) => s.failures.length);
 
   // تمهيد التخزين المحلي (settings فقط) بعد التركيب — يمنع hydration mismatch
   useEffect(() => {
@@ -180,12 +186,35 @@ export default function Home() {
               )}
             </TabsTrigger>
             <TabsTrigger
-              value="settings"
+              value="failures"
               className="min-h-11 gap-1.5 px-4 text-sm sm:text-base"
             >
-              <Settings2 className="h-4 w-4" aria-hidden /> ⚙️ الإعدادات
+              <AlertTriangle className="h-4 w-4" aria-hidden /> ⚠️ الأفلاس
+              {mounted && failuresCount > 0 && (
+                <Badge className="ms-1 bg-destructive/20 text-destructive border border-destructive/40 tabular-nums">
+                  {failuresCount}
+                </Badge>
+              )}
             </TabsTrigger>
-          </TabsList>
+             <TabsTrigger
+               value="settings"
+               className="min-h-11 gap-1.5 px-4 text-sm sm:text-base"
+             >
+               <Settings2 className="h-4 w-4" aria-hidden /> ⚙️ الإعدادات
+             </TabsTrigger>
+             <TabsTrigger
+               value="info"
+               className="min-h-11 gap-1.5 px-4 text-sm sm:text-base"
+             >
+               <Info className="h-4 w-4" aria-hidden /> 📘 معلومات
+             </TabsTrigger>
+             <TabsTrigger
+               value="contact"
+               className="min-h-11 gap-1.5 px-4 text-sm sm:text-base"
+             >
+               <Phone className="h-4 w-4" aria-hidden /> 📞 تواصل
+             </TabsTrigger>
+           </TabsList>
 
           {/* forceMount يحفظ حالة الجلسات عند تبديل التبويبات، والإخفاء عبر data-state */}
           <TabsContent value="tables" forceMount className="data-[state=inactive]:hidden">
@@ -200,8 +229,17 @@ export default function Home() {
           <TabsContent value="review" forceMount className="data-[state=inactive]:hidden">
             <ReviewTab />
           </TabsContent>
+          <TabsContent value="failures" forceMount className="data-[state=inactive]:hidden">
+            <FailuresTab />
+          </TabsContent>
           <TabsContent value="settings" forceMount className="data-[state=inactive]:hidden">
             <SettingsTab />
+          </TabsContent>
+          <TabsContent value="info" forceMount className="data-[state=inactive]:hidden">
+            <InfoTab />
+          </TabsContent>
+          <TabsContent value="contact" forceMount className="data-[state=inactive]:hidden">
+            <ContactTab />
           </TabsContent>
         </Tabs>
       </main>

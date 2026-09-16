@@ -324,3 +324,96 @@ def models_payload(base_url: str, api_key: Optional[str] = None,
             "models": fallback,
             "source": "fallback",
         }
+
+
+# ═══ 16: فحص الرصيد/الحصة لكل مزود ═══
+
+def check_provider_quota(base_url: str, api_key: Optional[str] = None,
+                         timeout: float = 8.0) -> dict:
+    """فحص الرصيد/الحصة للمزود — يرجع بنية موحدة ولا يُسجّل المفتاح.
+    - OpenRouter: GET /api/v1/auth/key → remaining/limit/used
+    - Groq / Z.ai: لا نقطة نهاية عامة للحصة → unsupported
+    - Ollama: مزود محلي بلا حصة → unlimited
+    """
+    root = normalize_base_url(base_url)
+    low = root.lower()
+    out = {
+        "ok": False,
+        "remaining": None,
+        "limit": None,
+        "used": None,
+        "exhausted": False,
+        "status": "unknown",
+        "error_type": None,
+        "error_ar": None,
+    }
+
+    # مزود محلي: لا توجد حصة محدودة
+    if any(host in low for host in ("localhost:11434", "127.0.0.1:11434", "ollama")):
+        out.update({
+            "ok": True,
+            "status": "unlimited",
+            "error_ar": "مزود محلي — لا توجد حصة محدودة",
+        })
+        return out
+
+    # OpenRouter: نقطة نهاية الرصيد الرسمية
+    if "openrouter" in low or "openrouter.ai" in low:
+        url = root + "/auth/key"
+        try:
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+            resp = httpx.get(url, headers=headers, timeout=timeout)
+            if resp.status_code == 200:
+                data = resp.json()
+                limits = (data.get("data") or {}).get("limits") or {}
+                remaining = limits.get("remaining", limits.get("remaining_tokens"))
+                limit = limits.get("limit", limits.get("total_tokens"))
+                used = limits.get("used")
+                if used is None and remaining is not None and limit is not None:
+                    try:
+                        used = float(limit) - float(remaining)
+                    except (TypeError, ValueError):
+                        used = None
+                out.update({
+                    "ok": True,
+                    "remaining": remaining,
+                    "limit": limit,
+                    "used": used,
+                    "exhausted": bool(remaining is not None and float(remaining) <= 0),
+                    "status": "exhausted" if remaining is not None and float(remaining) <= 0 else "active",
+                })
+                return out
+            et = classify_provider_error(resp.status_code, resp.text)
+            out.update({
+                "error_type": et.value,
+                "error_ar": ERROR_TYPE_AR[et],
+                "status": "error",
+            })
+            return out
+        except Exception as e:  # noqa: BLE001
+            et = classify_exception(e)
+            out.update({
+                "error_type": et.value,
+                "error_ar": ERROR_TYPE_AR[et],
+                "status": "error",
+            })
+            return out
+
+    # مزودات لا تعرض حصة عبر API عام
+    if any(host in low for host in ("groq", "z.ai", "bigmodel")):
+        out.update({
+            "ok": False,
+            "status": "unsupported",
+            "error_type": "unsupported",
+            "error_ar": "هذا المزود لا يعرض رصيد/حصة عبر API عام — افحص لوحة التحكم",
+        })
+        return out
+
+    # مخصص: غير مدعوم افتراضياً
+    out.update({
+        "ok": False,
+        "status": "unsupported",
+        "error_type": "unsupported",
+        "error_ar": "فحص الرصيد غير مدعوم لهذا المزود",
+    })
+    return out

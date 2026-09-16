@@ -126,6 +126,7 @@ class ExtractReq(BaseModel):
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     extra: Optional[dict] = None
+    merge: bool = False  # tables: true → جميع الصور جدول واحد (TABLES_MERGE_PROMPT)
 
 
 class GroupReq(BaseModel):
@@ -242,9 +243,26 @@ async def providers_health_batch(req: HealthBatchReq):
     results = {pid: ping for pid, ping in pairs}
     available = sum(1 for p in results.values() if p.get("available"))
     audit.log("provider.health_batch", target=f"{len(specs)} مزود",
-              details={"available": available,
-                       "unavailable": len(results) - available})
+              details={"available": available, "unavailable": len(results) - available})
     return {"ok": True, "results": results}
+
+
+# ═══ 16: فحص الرصيد/الحصة ═══
+
+class QuotaReq(BaseModel):
+    base_url: str
+    api_key: Optional[str] = None
+    timeout: float = 8
+
+
+@app.post("/api/providers/quota")
+async def providers_quota(req: QuotaReq):
+    """فحص الرصيد/الحصة المتاحة للمزود الواحد."""
+    ping = await asyncio.to_thread(
+        providers.check_provider_quota, req.base_url, req.api_key, float(req.timeout))
+    audit.log("provider.quota", target=ping.get("host") or "",
+              details={"status": ping.get("status"), "exhausted": ping.get("exhausted")})
+    return {"ok": True, **ping}
 
 
 # ═══════════════ GET /api/enhance/profiles ═══════════════
@@ -335,16 +353,27 @@ def _do_extract(req: ExtractReq) -> dict:
     model = req.model or ""
 
     if mode == "tables":
-        prompt = extractor.TABLES_PROMPT
+        # دمج: جميع الصور المرفقة هي محتويات الجدول نفسه (ليست جدولًا منفصلًا لكل صورة)
+        if req.merge:
+            prompt = extractor.TABLES_MERGE_PROMPT
+            imgs = images
+        else:
+            prompt = extractor.TABLES_PROMPT
+            imgs = images[:1]
         text, attempts = extractor.call_vl(
-            images[:1], req.provider, model, req.base_url, req.api_key,
+            imgs, req.provider, model, req.base_url, req.api_key,
             prompt, timeout)
         rows = extractor.parse_csv_tolerant(text)
         return {"text": text, "attempts": attempts, "parsed": rows,
                 "model": model, "audit_details": {"rows": len(rows)}}
 
     if mode == "mechanic":
-        prompt = extractor.MECHANIC_PROMPT
+        # 8.6 — few-shot من KB (حقن بالبرومبت فقط — لا تعديل على القيم المستخرجة)
+        fewshots: List[dict] = []
+        for fk in glossary.MECHANIC_KEYS:
+            fewshots.extend(kb.fewshot(fk, limit=1))
+        fewshots.sort(key=lambda s: int(s.get("count", 1)), reverse=True)
+        prompt = extractor.build_mechanic_prompt(fewshots[:5])
         # مسار موحد لكل المزودات (بما فيها Z.ai — مزود عادي): كل الصور في رسالة واحدة
         # عبر openai-compatible، ودمج/كشف تعارض الوجهين في Python عند الحاجة.
         text, attempts = extractor.call_vl(
@@ -444,7 +473,7 @@ async def extract_failover(req: FailoverReq):
         sub = ExtractReq(mode=req.mode, images_b64=images,
                          provider=link.provider, model=link.model or "",
                          base_url=link.base_url, api_key=link.api_key,
-                         extra={"timeout": req.timeout})
+                         extra={"timeout": req.timeout}, merge=req.merge)
         t_link = time.time()
         try:
             res = await asyncio.to_thread(_do_extract, sub)

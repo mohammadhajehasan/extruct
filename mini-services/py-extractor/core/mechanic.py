@@ -182,6 +182,7 @@ SINGLE_CATEGORIES = ("registration_statement", "temp_driving_license",
                      "transfer_deed")
 CATEGORY_AR = {
     "mechanic_card": "كرت الميكانيك",
+    "private_driving_license": "رخصة سير خاصة",
     "registration_statement": "بيان قيد المركبة",
     "temp_driving_license": "رخصة سير مؤقتة",
     "transfer_deed": "سند التمليك",
@@ -203,6 +204,16 @@ def group_faces(labeled: List[Tuple[str, str]]) -> List[Tuple[str, List[str]]]:
             if nxt and nxt[0] == "mechanic_card_front":
                 recs.append(("mechanic_card", [nxt[1], img])); i += 2; continue
             recs.append(("mechanic_card", [img])); i += 1
+        elif lab == "private_driving_license_front":
+            nxt = labeled[i + 1] if i + 1 < len(labeled) else None
+            if nxt and nxt[0] == "private_driving_license_back":
+                recs.append(("private_driving_license", [img, nxt[1]])); i += 2; continue
+            recs.append(("private_driving_license", [img])); i += 1
+        elif lab == "private_driving_license_back":
+            nxt = labeled[i + 1] if i + 1 < len(labeled) else None
+            if nxt and nxt[0] == "private_driving_license_front":
+                recs.append(("private_driving_license", [nxt[1], img])); i += 2; continue
+            recs.append(("private_driving_license", [img])); i += 1
         elif lab in SINGLE_CATEGORIES:
             recs.append((lab, [img])); i += 1
         else:
@@ -222,6 +233,7 @@ def group_faces_v2(items: List[dict]) -> List[dict]:
                 str(it.get("image_b64", "") or "")) for it in (items or [])]
 
     # 1) قراءة باركود الأوجه الخلفية (والأمامية إن وُجد) كمفاتيح مستقلة عن الترتيب
+    # ملاحظة: رخصة السير الخاصة لا تحتوي على باركود على الوجه الخلفي، لذا تُجمّع بالتجاور فقط.
     back_keys = {}
     front_keys = {}
     for idx, (lab, b64) in enumerate(labeled):

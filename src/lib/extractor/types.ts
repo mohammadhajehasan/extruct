@@ -179,7 +179,8 @@ export const CLASS_LABELS_AR: Record<string, string> = {
 export type EditorOp =
   | { op: "rot90" | "rot180" | "flip_h" | "flip_v" | "autocrop"; params?: never }
   | { op: "crop"; params: { x: number; y: number; w: number; h: number } }
-  | { op: "bright" | "contrast"; params: { value: number } };
+  | { op: "bright" | "contrast"; params: { value: number } }
+  | { op: "upscale"; params: { percent: number } };
 
 // ---------- 15.10 المرونة الإقليمية ----------
 // تصنيف أخطاء المزودات (لا رسالة عامة "فشل الاتصال") — وفق عقد /api/py/providers/health

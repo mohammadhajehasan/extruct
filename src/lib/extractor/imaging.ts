@@ -112,6 +112,18 @@ export async function renderOpsToCanvas(img: HTMLImageElement, ops: EditorOp[]):
         }
         break;
       }
+      case "upscale": {
+        const factor = (op.params.percent ?? 100) / 100;
+        const uw = Math.max(1, Math.round(canvas.width * factor));
+        const uh = Math.max(1, Math.round(canvas.height * factor));
+        const next = newCanvas(uw, uh);
+        const nctx = next.getContext("2d")!;
+        nctx.imageSmoothingEnabled = true;
+        nctx.imageSmoothingQuality = "high";
+        nctx.drawImage(canvas, 0, 0, uw, uh);
+        canvas = next;
+        break;
+      }
       case "bright":
       case "contrast": {
         const v = op.params.value / 100;
@@ -157,6 +169,23 @@ export async function makeThumb(dataUrl: string, max = 160): Promise<string> {
  */
 export const MODEL_MAX_EDGE = 2048;
 export const MODEL_JPEG_QUALITY = 0.92;
+
+/** قص جزء محدد من الصورة وإرجاعه كصورة جديدة */
+export async function cropImageToDataUrl(
+  dataUrl: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number
+): Promise<string> {
+  const img = await loadImage(dataUrl);
+  const cw = Math.max(1, Math.round(w));
+  const ch = Math.max(1, Math.round(h));
+  const c = newCanvas(cw, ch);
+  const ctx = c.getContext("2d")!;
+  ctx.drawImage(img, x, y, w, h, 0, 0, cw, ch);
+  return c.toDataURL("image/png");
+}
 
 /** أي صورة (dataUrl) → base64 خام مُسوّى للنموذج (حد الضلع + JPEG بخلفية بيضاء) */
 export async function imageToModelB64(src: string): Promise<string> {

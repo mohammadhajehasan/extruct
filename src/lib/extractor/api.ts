@@ -157,6 +157,8 @@ export async function extract(args: {
   baseUrl?: string;
   apiKey?: string;
   extra?: Record<string, unknown>;
+  /** tables: true → جميع الصور المرفقة جدول واحد (TABLES_MERGE_PROMPT) */
+  merge?: boolean;
 }): Promise<{ text: string; parsed?: unknown; attempts: number; model: string; elapsed_ms: number }> {
   return pyFetch(
     "extract",
@@ -168,6 +170,7 @@ export async function extract(args: {
       base_url: args.baseUrl || undefined,
       api_key: args.apiKey || undefined,
       extra: args.extra || undefined,
+      merge: args.merge || undefined,
     })
   );
 }
@@ -204,6 +207,30 @@ export async function healthBatch(
   );
 }
 
+// ---------- 16: الرصيد/الحصة حسب المزود ----------
+
+export type ProviderQuota = {
+  ok: boolean;
+  remaining?: number | null;
+  limit?: number | null;
+  used?: number | null;
+  exhausted: boolean;
+  status: "active" | "exhausted" | "unlimited" | "unsupported" | "error";
+  error_type?: string;
+  error_ar?: string;
+};
+
+export async function providerQuota(
+  baseUrl: string,
+  apiKey?: string,
+  timeout = 8
+): Promise<ProviderQuota> {
+  return pyFetch(
+    "providers/quota",
+    jsonInit("POST", { base_url: baseUrl, api_key: apiKey || undefined, timeout })
+  );
+}
+
 // ---------- 15.10.5 سلسلة التراجع التلقائي (Automatic Failover Chain) ----------
 
 export interface FailoverChainItem {
@@ -223,6 +250,8 @@ export async function extractWithFailover(args: {
   imagesB64: string[];
   chain: FailoverChainItem[];
   timeout?: number;
+  /** tables: true → جميع الصور المرفقة جدول واحد (TABLES_MERGE_PROMPT) */
+  merge?: boolean;
 }): Promise<{
   text: string;
   parsed?: unknown;
@@ -245,6 +274,7 @@ export async function extractWithFailover(args: {
         api_key: c.api_key || undefined,
       })),
       timeout: args.timeout ?? 120,
+      merge: args.merge || undefined,
     })
   );
 }

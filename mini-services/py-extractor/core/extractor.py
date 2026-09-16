@@ -29,6 +29,17 @@ TABLES_PROMPT = (
     "الخلية الفارغة تبقى فارغة، غير المقروء = UNCLEAR، حافظ على النص العربي كما هو."
 )
 
+# tables-merge — جميع الصور المرفقة هي محتويات الجدول نفسه (صفحات متتالية /
+# جزء واحد من جدول كبير)، وليست جدولًا منفصلًا لكل صورة. نجمع جميع الصفوف في CSV واحد.
+TABLES_MERGE_PROMPT = (
+    "الصور المرفقة جميعها تمثل جدولًا واحدًا كبيرًا (صفحات متتالية أو أجزاء من نفس "
+    "الجدول)، وليست جدولًا منفصلة لكل صورة. نسخ جميع ما هو مكتوب في الصور كما هو "
+    "مكتوب تماماً بدون أي تصحيح، ونجمع النتيجة في CSV واحد فقط بفواصل، مع الحفاظ على "
+    "ترتيب الصور (الصورة الأولى أولاً ثم الثانية إلخ). الخلية الفارغة تبقى فارغة، "
+    "غير المقروء = UNCLEAR، حافظ على النص العربي كما هو. لا تكرر ترويسة الجدول في كل "
+    "صورة — الترويسة تُكتب مرة واحدة في الأعلى فقط."
+)
+
 # mechanic — برومبت 7.4 حرفياً (JSON ثابت المفاتيح)
 MECHANIC_PROMPT = (
     "أنت خبير وثائق المركبات السورية. استخرج من الصورة/الصورتين الحقول كما هي "
@@ -38,9 +49,27 @@ MECHANIC_PROMPT = (
     "قواعد: غير موجود=\"\" | غير مقروء=\"UNCLEAR\" | انقل ولا تصحّح | أرقام لاتينية."
 )
 
+
+def build_mechanic_prompt(fewshots: Optional[List[dict]] = None) -> str:
+    """7.4 + 8.6 — حقن few-shot من KB (اقتراحات فقط، لا تُطبَّق تلقائياً على القيم)."""
+    if not fewshots:
+        return MECHANIC_PROMPT
+    lines = [
+        MECHANIC_PROMPT,
+        "\n\nأمثلة تصحيحات بشرية سابقة (للتذكير فقط — انقل ما تراه بالصورة حرفياً):",
+    ]
+    for s in fewshots[:5]:
+        field = s.get("field", "?")
+        wrong = s.get("wrong", "")
+        right = s.get("right", "")
+        if wrong or right:
+            lines.append(f'- {field}: كان يُستخرج أحياناً "{wrong}" والصواب "{right}"')
+    return "\n".join(lines)
+
 # classify — تصنيف الصورة (عقد API)
 CLASSIFY_PROMPT = (
     "صنّف هذه الصورة إلى واحدة من الفئات فقط: mechanic_card_front | mechanic_card_back | "
+    "private_driving_license_front | private_driving_license_back | "
     "registration_statement | temp_driving_license | transfer_deed | table_document | unknown. "
     'أعد JSON فقط بالشكل {"label": "...", "confidence": 0.0} دون أي نص آخر.'
 )
@@ -130,7 +159,11 @@ def _call_openai_compat(images_b64: List[str], prompt: str, model: str,
         model=model,
         messages=[{"role": "user", "content": content}],
     )
-    return getattr(resp.choices[0].message, "content", "") or ""
+    choices = getattr(resp, "choices", None) or []
+    if not choices:
+        return ""
+    message = getattr(choices[0], "message", None)
+    return getattr(message, "content", "") or ""
 
 
 # ═══ نقطة الدخول الموحدة مع retry أسّي ×3 (1s, 2s, 4s) ═══

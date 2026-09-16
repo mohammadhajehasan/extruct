@@ -28,7 +28,12 @@ def _skew_angle(gray: np.ndarray) -> float:
     if lines is None:
         return 0.0
     angles = []
-    for x1, y1, x2, y2 in lines[:, 0]:
+    for line in lines:
+        # Flatten the line to handle both (n,1,4) and (n,4) shapes
+        flat_line = np.asarray(line).flatten()
+        if flat_line.size < 4:
+            continue
+        x1, y1, x2, y2 = int(flat_line[0]), int(flat_line[1]), int(flat_line[2]), int(flat_line[3])
         dx, dy = float(x2 - x1), float(y2 - y1)
         if abs(dx) < 1e-6:
             continue

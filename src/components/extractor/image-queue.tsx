@@ -21,6 +21,7 @@ import {
 import {
   ArrowLeftRight,
   ArrowRight,
+  Eye,
   FileText,
   GripVertical,
   Loader2,
@@ -29,6 +30,7 @@ import {
 } from "lucide-react";
 import { ImageDropZone } from "./image-drop-zone";
 import { ImageEditor } from "./image-editor";
+import { ImageViewer } from "./image-viewer";
 import { useExtractorStore, type ImageItem } from "@/lib/extractor/store";
 
 interface ImageQueueProps {
@@ -44,6 +46,8 @@ interface ImageQueueProps {
   selectedId?: string | null;
   onSelect?: (id: string) => void;
   title?: string;
+  /** عند true: تظهر نافذة معاينة الصورة عند النقر */
+  enableImageViewer?: boolean;
 }
 
 export function ImageQueue({
@@ -56,6 +60,7 @@ export function ImageQueue({
   selectedId,
   onSelect,
   title = "طابور الإدخال الموحّد",
+  enableImageViewer = true,
 }: ImageQueueProps) {
   const images = useExtractorStore((s) => s.images);
   const removeImage = useExtractorStore((s) => s.removeImage);
@@ -67,6 +72,8 @@ export function ImageQueue({
   const [swapIds, setSwapIds] = useState<string[]>([]);
   const [editorId, setEditorId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [viewerImage, setViewerImage] = useState<string | null>(null);
+  const [viewerOpen, setViewerOpen] = useState(false);
 
   // اشتقاق أثناء التصيير بدل effect — يتجاهل تلقائياً المحددات المحذوفة من الطابور
   const validSwapIds = swapIds.filter((id) => images.some((i) => i.id === id));
@@ -101,6 +108,11 @@ export function ImageQueue({
     setEditorId(id);
     setEditorOpen(true);
     onSelect?.(id);
+  };
+
+  const openViewer = (dataUrl: string) => {
+    setViewerImage(dataUrl);
+    setViewerOpen(true);
   };
 
   const sourceBadge = (img: ImageItem) =>
@@ -226,7 +238,15 @@ export function ImageQueue({
                     {/* 15.8.2 نقرة المصغّرة → محرر بمعاينة كاملة */}
                     <button
                       type="button"
-                      onClick={() => openEditor(img.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (enableImageViewer) openViewer(img.previewUrl ?? img.dataUrl);
+                        else openEditor(img.id);
+                      }}
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        openViewer(img.previewUrl ?? img.dataUrl);
+                      }}
                       className="block w-full cursor-zoom-in"
                       aria-label={`معاينة وتحرير ${img.name}`}
                     >
@@ -268,6 +288,16 @@ export function ImageQueue({
                         onClick={() => openEditor(img.id)}
                       >
                         <Pencil className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6"
+                        aria-label={`معاينة ${img.name}`}
+                        title="معاينة الصورة كاملة"
+                        onClick={() => openViewer(img.previewUrl ?? img.dataUrl)}
+                      >
+                        <Eye className="h-3 w-3" />
                       </Button>
                       <Button
                         variant="ghost"
@@ -327,6 +357,16 @@ export function ImageQueue({
         open={editorOpen && !!editorImage}
         onOpenChange={setEditorOpen}
       />
+
+      {/* معاين الصورة في نافذة منبثقة */}
+      {enableImageViewer && (
+        <ImageViewer
+          imageUrl={viewerImage ?? ""}
+          imageName={images.find((i) => i.dataUrl === viewerImage || i.previewUrl === viewerImage)?.name ?? "صورة"}
+          open={viewerOpen}
+          onOpenChange={setViewerOpen}
+        />
+      )}
     </div>
   );
 }

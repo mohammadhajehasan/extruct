@@ -26,9 +26,11 @@ import {
   ZoomIn,
   ZoomOut,
   Maximize2,
+  Copy,
+  Split,
 } from "lucide-react";
 import { useExtractorStore, type ImageItem } from "@/lib/extractor/store";
-import { loadImage, renderOpsToCanvas, makeThumb } from "@/lib/extractor/imaging";
+import { loadImage, renderOpsToCanvas, makeThumb, cropImageToDataUrl } from "@/lib/extractor/imaging";
 import type { EditorOp } from "@/lib/extractor/types";
 
 interface ImageEditorProps {
@@ -64,43 +66,33 @@ const OP_LABEL: Record<string, string> = {
   flip_h: "قلب أفقي",
   flip_v: "قلب رأسي",
   autocrop: "قص تلقائي",
+  upscale: "تكبير",
 };
 
 export function ImageEditor({ image, open, onOpenChange }: ImageEditorProps) {
   const updateImage = useExtractorStore((s) => s.updateImage);
 
-  const [ops, setOps] = useState<EditorOp[]>([]);
-  const [bright, setBright] = useState(0);
-  const [contrast, setContrast] = useState(0);
-  const [sel, setSel] = useState<DragState | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [zoom, setZoom] = useState(1);
-  const [disp, setDisp] = useState<DisplayBox | null>(null);
-  // عدّاد يزداد بعد كل إعادة رسم للـcanvas — يضمن قياس التكبير بعد اكتمال الرسم دائماً
-  const [paintTick, setPaintTick] = useState(0);
+const [ops, setOps] = useState<EditorOp[]>([]);
+const [bright, setBright] = useState(0);
+const [contrast, setContrast] = useState(0);
+const [sel, setSel] = useState<DragState | null>(null);
+const [splitRegions, setSplitRegions] = useState<Array<{
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}>>([]);
+const [busy, setBusy] = useState(false);
+const [zoom, setZoom] = useState(1);
+const [upscalePercent, setUpscalePercent] = useState(200);
+const [disp, setDisp] = useState<DisplayBox | null>(null);
+const [canvasSize, setCanvasSize] = useState<{ w: number; h: number } | null>(null);
+const [paintTick, setPaintTick] = useState(0);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const origImgRef = useRef<HTMLImageElement | null>(null);
 
-  // تهيئة الحالة عند فتح المحرر لصورة معينة
-  useEffect(() => {
-    if (open && image) {
-      setOps([...image.ops]);
-      const b = [...image.ops].reverse().find((o) => o.op === "bright");
-      const c = [...image.ops].reverse().find((o) => o.op === "contrast");
-      setBright(b && "params" in b ? (b.params as { value: number }).value : 0);
-      setContrast(c && "params" in c ? (c.params as { value: number }).value : 0);
-      setSel(null);
-      setZoom(1);
-      loadImage(image.dataUrl)
-        .then((img) => {
-          origImgRef.current = img;
-          void paintWith(img, image.ops);
-        })
-        .catch(() => toast.error("فشل تحميل الصورة للمحرر"));
-    }
-    }, [open, image?.id]);
-
+  // paintWith must be declared before useEffects that use it
   const paintWith = useCallback(
     async (img: HTMLImageElement, opList: EditorOp[]) => {
       const canvas = canvasRef.current;
@@ -110,6 +102,7 @@ export function ImageEditor({ image, open, onOpenChange }: ImageEditorProps) {
         canvas.width = out.width;
         canvas.height = out.height;
         canvas.getContext("2d")!.drawImage(out, 0, 0);
+        setCanvasSize({ w: out.width, h: out.height });
         setPaintTick((t) => t + 1);
       } catch {
         // تجاهل أخطاء الرسم المؤقتة
@@ -118,31 +111,54 @@ export function ImageEditor({ image, open, onOpenChange }: ImageEditorProps) {
     []
   );
 
+  // تهيئة الحالة عند فتح المحرر لصورة معينة
+   useEffect(() => {
+    if (!open || !image) return;
+    setTimeout(() => {
+      setOps([...image.ops]);
+      const b = [...image.ops].reverse().find((o) => o.op === "bright");
+      const c = [...image.ops].reverse().find((o) => o.op === "contrast");
+      setBright(b && "params" in b ? (b.params as { value: number }).value : 0);
+      setContrast(c && "params" in c ? (c.params as { value: number }).value : 0);
+      setSel(null);
+      setZoom(1);
+    }, 0);
+    loadImage(image.dataUrl)
+      .then((img) => {
+        origImgRef.current = img;
+        void paintWith(img, image.ops);
+      })
+      .catch(() => toast.error("فشل تحميل الصورة للمحرر"));
+  }, [open, image?.id, paintWith]);
+
   useEffect(() => {
     if (open && origImgRef.current) void paintWith(origImgRef.current, ops);
   }, [open, ops, paintWith]);
 
-  // تطبيق التكبير بعد كل إعادة رسم (paintTick يضمن الترتيب) ثم قياس الحجم المعروض فعلياً
-  // القياس يجري دائماً بكلاسات الملاءمة المفعّلة، وعند التكبير نتجاوز القيود بأنماط مضمنة فقط
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!open || !canvas) return;
-    canvas.style.width = "";
-    canvas.style.height = "";
-    canvas.style.maxWidth = "";
-    canvas.style.maxHeight = "";
-    if (zoom !== 1) {
-      const fitW = canvas.clientWidth;
-      const fitH = canvas.clientHeight;
-      if (fitW > 0 && fitH > 0) {
-        canvas.style.maxWidth = "none";
-        canvas.style.maxHeight = "none";
-        canvas.style.width = `${Math.round(fitW * zoom)}px`;
-        canvas.style.height = `${Math.round(fitH * zoom)}px`;
-      }
-    }
-    setDisp({ w: canvas.clientWidth, h: canvas.clientHeight, ox: canvas.offsetLeft, oy: canvas.offsetTop });
-  }, [zoom, ops, open, paintTick]);
+// تطبيق التكبير بعد كل إعادة رسم (paintTick يضمن الترتيب) ثم قياس الحجم المعروض فعلياً
+    // القياس يجري دائماً بكلاسات الملاءمة المفعّلة، وعند التكبير نتجاوز القيود بأنماط مضمنة فقط
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!open || !canvas) return;
+        canvas.style.width = "";
+        canvas.style.height = "";
+        canvas.style.maxWidth = "";
+        canvas.style.maxHeight = "";
+        if (zoom !== 1) {
+            const fitW = canvas.clientWidth;
+            const fitH = canvas.clientHeight;
+            if (fitW > 0 && fitH > 0) {
+                canvas.style.maxWidth = "none";
+                canvas.style.maxHeight = "none";
+                canvas.style.width = `${Math.round(fitW * zoom)}px`;
+                canvas.style.height = `${Math.round(fitH * zoom)}px`;
+            }
+        }
+        setDisp({ w: canvas.clientWidth, h: canvas.clientHeight, ox: canvas.offsetLeft, oy: canvas.offsetTop });
+        if (canvas.width && canvas.height) {
+            setCanvasSize({ w: canvas.width, h: canvas.height });
+        }
+    }, [zoom, ops, open, paintTick]);
 
   const zoomIn = () => setZoom((z) => Math.min(MAX_ZOOM, +(z + ZOOM_STEP).toFixed(2)));
   const zoomOut = () => setZoom((z) => Math.max(MIN_ZOOM, +(z - ZOOM_STEP).toFixed(2)));
@@ -175,34 +191,29 @@ export function ImageEditor({ image, open, onOpenChange }: ImageEditorProps) {
     setSel((s) => (s ? { ...s, active: false } : s));
   };
 
-  const selRect = sel
+const selRect = sel
     ? {
         x: Math.min(sel.startX, sel.curX),
         y: Math.min(sel.startY, sel.curY),
         w: Math.abs(sel.curX - sel.startX),
         h: Math.abs(sel.curY - sel.startY),
       }
-    : null;
+ : null;
 
-  const selStyle: React.CSSProperties | undefined = (() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !disp || !selRect || selRect.w < 3 || selRect.h < 3) return undefined;
-    const scaleX = disp.w / canvas.width;
-    const scaleY = disp.h / canvas.height;
-    // الإزاحة داخل حاوية الـcanvas الملفوفة (inline-block) — صفر عادةً
-    // لكنها دفاع مستقبلي إن أُضيفت هوامش/عناصر مجاورة حول الـcanvas
-    return {
-      position: "absolute",
-      left: `${selRect.x * scaleX + disp.ox}px`,
-      top: `${selRect.y * scaleY + disp.oy}px`,
-      width: `${selRect.w * scaleX}px`,
-      height: `${selRect.h * scaleY}px`,
-      border: "2px dashed rgb(16,185,129)",
-      borderRadius: "2px",
-      background: "rgba(16,185,129,0.12)",
-      pointerEvents: "none",
-    };
-  })();
+  // compute selStyle inline to avoid useEffect loop
+  const selStyle = selRect && selRect.w >= 3 && selRect.h >= 3 && disp
+    ? {
+        position: "absolute" as const,
+        left: `${selRect.x * (disp.w / (canvasSize?.w ?? 1)) + (disp?.ox ?? 0)}px`,
+        top: `${selRect.y * (disp.h / (canvasSize?.h ?? 1)) + (disp?.oy ?? 0)}px`,
+        width: `${selRect.w * (disp.w / (canvasSize?.w ?? 1))}px`,
+        height: `${selRect.h * (disp.h / (canvasSize?.h ?? 1))}px`,
+        border: "2px dashed rgb(16,185,129)",
+        borderRadius: "2px",
+        background: "rgba(16,185,129,0.12)",
+        pointerEvents: "none" as const,
+      }
+    : undefined;
 
   const pushOp = (op: EditorOp) => setOps((prev) => [...prev, op]);
 
@@ -254,7 +265,19 @@ export function ImageEditor({ image, open, onOpenChange }: ImageEditorProps) {
     setBright(0);
     setContrast(0);
     setSel(null);
+    setUpscalePercent(200);
     toast.info("أُعيد تعيين مكدس العمليات");
+  };
+
+  const applyUpscale = () => {
+    if (!image) return;
+    setOps((prev) => {
+      const without: EditorOp[] = prev.filter((o) => o.op !== "upscale");
+      without.push({ op: "upscale", params: { percent: upscalePercent } });
+      return without;
+    });
+    setZoom(1);
+    toast.success(`أُضاف تكبير ${upscalePercent}%`);
   };
 
   const applyOps = async () => {
@@ -343,12 +366,38 @@ export function ImageEditor({ image, open, onOpenChange }: ImageEditorProps) {
                     <Button
                       variant="outline"
                       size="sm"
-                      className="min-h-11"
+                      className="min-h-11 w-11 p-0"
                       onClick={() => setZoom(1)}
                       disabled={zoom === 1}
                       title="إعادة المعاينة إلى ملاءمة العمود"
                     >
                       <Maximize2 className="h-4 w-4 me-1" /> ملاءمة
+                    </Button>
+                  </div>
+
+                  {/* تكبير وتطبيق */}
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      defaultValue={200}
+                      min={25}
+                      max={800}
+                      step={25}
+                      className="w-20 text-center border rounded px-1 py-0.5 text-xs"
+                      onChange={e => {
+                        const v = Math.max(25, Math.min(800, Number(e.target.value) || 200));
+                        setUpscalePercent(v);
+                      }}
+                    />
+                    <span className="text-xs text-muted-foreground">%</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="min-h-11"
+                      onClick={applyUpscale}
+                      disabled={busy}
+                    >
+                      <ZoomIn className="h-4 w-4 me-1" /> تكبير وتطبيق
                     </Button>
                   </div>
                 </div>
@@ -369,6 +418,26 @@ export function ImageEditor({ image, open, onOpenChange }: ImageEditorProps) {
                         aria-label="معاينة الصورة بعد العمليات"
                       />
                       {selStyle && <div style={selStyle} />}
+                      {splitRegions.map((r, i) => {
+                        const sx = disp ? disp.w / (canvasSize?.w ?? 1) : 1;
+                        const sy = disp ? disp.h / (canvasSize?.h ?? 1) : 1;
+                        return (
+                          <div
+                            key={i}
+                            style={{
+                              position: "absolute",
+                              left: `${r.x * sx + (disp?.ox ?? 0)}px`,
+                              top: `${r.y * sy + (disp?.oy ?? 0)}px`,
+                              width: `${r.w * sx}px`,
+                              height: `${r.h * sy}px`,
+                              border: "2px dashed rgb(251,191,36)",
+                              borderRadius: "2px",
+                              background: "rgba(251,191,36,0.1)",
+                              pointerEvents: "none",
+                            }}
+                          />
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
@@ -434,6 +503,105 @@ export function ImageEditor({ image, open, onOpenChange }: ImageEditorProps) {
               </span>
             </div>
 
+            {/* تقسيم الصورة لمناطق متعددة */}
+            {image && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="min-h-11"
+                  onClick={() => setSplitRegions([])}
+                  title="امسح جميع المناطق وإعادة البدء"
+                >
+                  <Split className="h-4 w-4 me-1" /> مسح المناطق
+                </Button>
+                {splitRegions.length > 0 && (
+                  <Badge variant="outline" className="border-primary/40 text-primary">
+                    مناطق: {splitRegions.length}
+                  </Badge>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="min-h-11"
+                  onClick={() => {
+                    if (!selRect || selRect.w < 5 || selRect.h < 5) return;
+                    setSplitRegions((prev) => [
+                      ...prev,
+                      {
+                        x: Math.round(selRect.x),
+                        y: Math.round(selRect.y),
+                        w: Math.round(selRect.w),
+                        h: Math.round(selRect.h),
+                      },
+                    ]);
+                    setSel(null);
+                    toast.success(`أُضيفت منطقة — إجمالي: ${splitRegions.length + 1}`);
+                  }}
+                  disabled={!selRect || selRect.w < 5 || selRect.h < 5}
+                >
+                  <Copy className="h-4 w-4 me-1" /> إضافة منطقة
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="min-h-11"
+                  onClick={() => setSplitRegions([])}
+                  disabled={splitRegions.length === 0}
+                >
+                  مسح المناطق
+                </Button>
+              </div>
+            )}
+
+            {splitRegions.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="min-h-11 bg-primary hover:bg-primary/90 text-white"
+                  onClick={async () => {
+                    if (!image) return;
+                    setBusy(true);
+                    try {
+                      const store = useExtractorStore.getState();
+                      const imgs = await Promise.all(
+                        splitRegions.map(async (r, i) => {
+                          const cropped = await cropImageToDataUrl(
+                            image.dataUrl,
+                            r.x,
+                            r.y,
+                            r.w,
+                            r.h
+                          );
+                          return {
+                            name: `${image.name}.part${i + 1}`,
+                            dataUrl: cropped,
+                          };
+                        })
+                      );
+                      store.removeImage(image.id);
+                      store.addImages(imgs);
+                      toast.success(`تم التقسيم إلى ${imgs.length} صورة`);
+                      onOpenChange(false);
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : "فشل التقسيم");
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                  disabled={busy}
+                >
+                  {busy ? (
+                    <Loader2 className="h-4 w-4 me-1 animate-spin" />
+                  ) : (
+                    <Check className="h-4 w-4 me-1" />
+                  )}
+                  تطبيق التقسيم ({splitRegions.length})
+                </Button>
+              </div>
+            )}
+
             {/* المنزلقات */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -488,7 +656,9 @@ export function ImageEditor({ image, open, onOpenChange }: ImageEditorProps) {
                           ? `سطوع ${o.params.value}`
                           : o.op === "contrast"
                             ? `تباين ${o.params.value}`
-                            : (OP_LABEL[o.op] ?? o.op)}
+                            : o.op === "upscale"
+                              ? `تكبير ${o.params.percent}%`
+                              : (OP_LABEL[o.op] ?? o.op)}
                     </Badge>
                   ))}
                 </div>

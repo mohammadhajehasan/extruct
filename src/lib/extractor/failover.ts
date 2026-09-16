@@ -37,6 +37,8 @@ export function smartExtract(args: {
   mode: "tables" | "mechanic" | "classify" | "verify";
   imagesB64: string[];
   timeout?: number;
+  /** tables: true → جميع الصور المرفقة جدول واحد (TABLES_MERGE_PROMPT) */
+  merge?: boolean;
 }): Promise<SmartExtractResult> {
   const { settings, providerStatuses } = useExtractorStore.getState();
   const { provider, model, baseUrl, failoverEnabled } = settings;
@@ -68,6 +70,7 @@ export function smartExtract(args: {
       imagesB64: args.imagesB64,
       chain,
       timeout: args.timeout,
+      merge: args.merge,
     });
   }
 
@@ -78,6 +81,7 @@ export function smartExtract(args: {
     model,
     baseUrl: baseUrl || undefined,
     apiKey: apiKey || undefined,
+    merge: args.merge,
   });
 }
 

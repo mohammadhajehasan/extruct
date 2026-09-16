@@ -22,6 +22,8 @@ CONF = {"O": "0", "o": "0", "I": "1", "l": "1", "S": "5", "B": "8", "Z": "2", "G
 CATEGORIES = [
     {"key": "mechanic_card", "name_ar": "كرت الميكانيك", "faces": 2,
      "rule_ar": "الوجهان = سجل واحد = صفحة واحدة"},
+    {"key": "private_driving_license", "name_ar": "رخصة سير خاصة", "faces": 2,
+     "rule_ar": "الوجهان = سجل واحد = صفحة واحدة (بدون باركود على الخلفي)"},
     {"key": "registration_statement", "name_ar": "بيان قيد المركبة", "faces": 1,
      "rule_ar": "صورة = صفحة"},
     {"key": "temp_driving_license", "name_ar": "رخصة سير مؤقتة", "faces": 1,
@@ -50,14 +52,18 @@ MECHANIC_KEYS = [f["key"] for f in MECHANIC_FIELDS]
 
 # تسميات التصنيف الممكنة (عقد API — mode=classify)
 CLASSIFY_LABELS = [
-    "mechanic_card_front", "mechanic_card_back", "registration_statement",
-    "temp_driving_license", "transfer_deed", "table_document", "unknown",
+    "mechanic_card_front", "mechanic_card_back",
+    "private_driving_license_front", "private_driving_license_back",
+    "registration_statement", "temp_driving_license",
+    "transfer_deed", "table_document", "unknown",
 ]
 
 # الترجمة العربية لتسميات التصنيف (للعرض)
 CLASSIFY_AR = {
     "mechanic_card_front": "كرت ميكانيك - أمامي",
     "mechanic_card_back": "كرت ميكانيك - خلفي",
+    "private_driving_license_front": "رخصة سير خاصة - أمامي",
+    "private_driving_license_back": "رخصة سير خاصة - خلفي",
     "registration_statement": "بيان قيد المركبة",
     "temp_driving_license": "رخصة سير مؤقتة",
     "transfer_deed": "سند التمليك",
