@@ -1,9 +1,24 @@
 // عميل خدمة Python — المستخرج الأسطوري v7.1
-// وفق عقد API: كل الاستدعاءات عبر مسار /api/py/... (وكيل شفاف في Next.js — بدون منفذ صريح أو localhost في كود العميل)
+// وفق عقد API: كل الاستداءات عبر مسار /api/py/... (وكيل شفاف في Next.js — بدون منفذ صريح أو localhost في كود العميل)
+//
+// PY = "" → مسافة نسبية (/api/py/...) تُكمل تلقائياً بالمنصة الحالية:
+//   - محلياً: Next.js يُ proxyl إلى http://127.0.0.1:8000/api عبر route.ts
+//   - على Netlify/استضافة ثابتة: لا يوجد خادم Next.js، لذا تُستخدم NEXT_PUBLIC_PY_BASE
+//     (مثلاً https://extruct.onrender.com/api) كعنوان مطلق للbackend.
 
 import type { FailoverLogEntry, ProviderStatus } from "./types";
 
-export const PY = "";
+/**
+ * عنوان backend المستخدم من العميل:
+ * - فارغ/غير مُحدد → مسافة نسبية (/api/py/...) تُكمل تلقائياً بالمنصة الحالية:
+ *   - محلياً: Next.js يُ proxyl إلى http://127.0.0.1:8000/api عبر route.ts
+ *   - على استضافة ثابتة (Netlify static export): لا يوجد Next.js server، لذا يجب
+ *     تمرير عنوان مطلق عبر NEXT_PUBLIC_PY_BASE أو PY_EXTRACTOR_URL
+ *     (مثلاً https://extruct.onrender.com/api).
+ */
+const raw =
+  (process.env.NEXT_PUBLIC_PY_BASE || process.env.PY_EXTRACTOR_URL || "").trim();
+export const PY = raw ? raw.replace(/\/$/, "") : "";
 
 type Json = Record<string, unknown>;
 
