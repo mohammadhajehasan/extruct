@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   Button,
@@ -28,6 +28,7 @@ import {
   FileSpreadsheet,
   Info,
   Zap,
+  Clock,
 } from "lucide-react";
 import { readFileAsDataUrl } from "./image-drop-zone";
 import { CsvGrid } from "./csv-grid";
@@ -59,6 +60,8 @@ export function TablesTab() {
       const [selectedId, setSelectedId] = useState<string | null>(null);
   const [enhancingId, setEnhancingId] = useState<string | null>(null);
   const [extractingId, setExtractingId] = useState<string | null>(null);
+  const [extractStartedAt, setExtractStartedAt] = useState<number | null>(null);
+  const [tick, setTick] = useState(0);
   const [pdfParsing, setPdfParsing] = useState(false);
   const [batchTotal, setBatchTotal] = useState(0);
   const [batchDone, setBatchDone] = useState(0);
@@ -67,6 +70,21 @@ export function TablesTab() {
   const [exporting, setExporting] = useState<string | null>(null);
 
   const [mergeMultipleImages, setMergeMultipleImages] = useState(false);
+
+  // عداد المدة: يحدّث كل ثانية طالما أن الاستخراج قيد التشغيل
+  useEffect(() => {
+    if (extractingId === null && batchTotal === 0) return;
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [extractingId, batchTotal]);
+
+  const elapsedLabel = (() => {
+    if (!extractStartedAt) return "";
+    const secs = Math.floor((Date.now() - extractStartedAt) / 1000);
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m ? m + "د " : ""}${s}ث`;
+  })();
 
   const selected = images.find((i) => i.id === selectedId) ?? null;
 
@@ -191,6 +209,7 @@ export function TablesTab() {
         return;
       }
       if (!opts?.silent) setExtractingId(imageId);
+      setExtractStartedAt(Date.now());
       try {
         const b64s = await Promise.all(pending.map((item) => getExtractB64(item)));
         const res = await smartExtract({ mode: "tables", imagesB64: b64s, merge: true });
@@ -217,6 +236,7 @@ export function TablesTab() {
         showExtractError(e, { fallback: "فشل الاستخراج المدمج" });
       } finally {
         if (!opts?.silent) setExtractingId(null);
+        setExtractStartedAt(null);
       }
       return;
     }
@@ -224,6 +244,7 @@ export function TablesTab() {
     const item = images.find((i) => i.id === imageId);
     if (!item) return;
     if (!opts?.silent) setExtractingId(imageId);
+    setExtractStartedAt(Date.now());
     try {
       const b64 = await getExtractB64(item);
       // 15.10: مسار موحّد واعٍ للسلسلة — مباشر أو عبر failover حسب الإعدادات
@@ -292,17 +313,18 @@ export function TablesTab() {
            // We'll use the generic message for now, could be enhanced
            errorDetailAr = errorAr;
          }
-         addFailure({
-           imageId: imageId,
-           mode: "tables",
-           error: errorAr,
-           error_ar: errorDetailAr,
-           timestamp: Date.now()
-         });
-       }
-     } finally {
-       if (!opts?.silent) setExtractingId(null);
-     }
+addFailure({
+            imageId: imageId,
+            mode: "tables",
+            error: errorAr,
+            error_ar: errorDetailAr,
+            timestamp: Date.now()
+          });
+        }
+      } finally {
+        if (!opts?.silent) setExtractingId(null);
+        setExtractStartedAt(null);
+      }
   };
 
   // دفعة متوازية — مجموعات حسب sourceFile (نفس الملف = جدول واحد)
@@ -316,11 +338,12 @@ export function TablesTab() {
     }
 
     if (mergeMultipleImages) {
-      // Extract all images together as one combined table
+      // جميع الصور المرفقة = جدول واحد (TABLES_MERGE_PROMPT)
       setBatchTotal(1);
       setBatchDone(0);
+      setExtractStartedAt(Date.now());
       try {
-const b64s = await Promise.all(pending.map((item) => getExtractB64(item)));
+        const b64s = await Promise.all(pending.map((item) => getExtractB64(item)));
         const res = await smartExtract({ mode: "tables", imagesB64: b64s, merge: true });
         const csv = cleanCsvText(res.text);
         if (!csv || csv.trim() === "-" || csv.trim() === "") {
@@ -346,6 +369,7 @@ const b64s = await Promise.all(pending.map((item) => getExtractB64(item)));
       } finally {
         setBatchTotal(0);
         setBatchDone(0);
+        setExtractStartedAt(null);
       }
       return;
     }
@@ -361,6 +385,7 @@ const b64s = await Promise.all(pending.map((item) => getExtractB64(item)));
     const groupArray = Array.from(groups.values());
     setBatchTotal(groupArray.length);
     setBatchDone(0);
+    setExtractStartedAt(Date.now());
 
     for (const group of groupArray) {
       try {
@@ -476,7 +501,7 @@ const b64s = await Promise.all(pending.map((item) => getExtractB64(item)));
                 </span>
               </div>
             )}
-            <div className="flex items-center gap-2 px-3 py-2 rounded-md border bg-muted/30">
+<div className="flex items-center gap-2 px-3 py-2 rounded-md border bg-muted/30">
               <input
                 type="checkbox"
                 id="mergeMultipleImages"
@@ -492,6 +517,14 @@ const b64s = await Promise.all(pending.map((item) => getExtractB64(item)));
                 جميع الصور = جدول واحد
               </label>
             </div>
+            {extractStartedAt && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-md border bg-primary/10 text-primary">
+                <Clock className="h-4 w-4 animate-pulse" />
+                <span className="text-xs font-mono whitespace-nowrap">
+                  {elapsedLabel}
+                </span>
+              </div>
+            )}
             <Button
               size="sm"
               className="min-h-11 bg-primary hover:bg-primary/90 text-white"
@@ -540,9 +573,15 @@ const b64s = await Promise.all(pending.map((item) => getExtractB64(item)));
                   <Loader2 className="h-4 w-4 me-1 animate-spin" />
                 ) : (
                   <Brain className="h-4 w-4 me-1" />
-                )}
-                🧠 استخراج {extractingId === selected.id ? "…" : "الجداول"}
+)}
+                🧠 استخراج {extractingId === selected.id ? "…" : "الجTables"}
               </Button>
+              {extractingId === selected.id && extractStartedAt && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-md border bg-primary/10 text-primary">
+                  <Clock className="h-4 w-4 animate-pulse" />
+                  <span className="text-xs font-mono whitespace-nowrap">{elapsedLabel}</span>
+                </div>
+              )}
 
               {/* خطة التحسين */}
               {selected.enhanced && (
