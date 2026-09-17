@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 
-const PY_BASE = 'http://127.0.0.1:8000/api';
+const PY_BASE = process.env.PY_BASE || 'http://127.0.0.1:8000/api';
 
 const HOP_BY_HOP = new Set([
   'connection', 'keep-alive', 'transfer-encoding', 'upgrade',

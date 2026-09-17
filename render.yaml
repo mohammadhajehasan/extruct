@@ -1,0 +1,27 @@
+# Backend (Python FastAPI) — Render Web Service
+# https://docs.render.com/reference/blueprint-spec/
+services:
+  - type: web
+    name: extruct-py
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PORT
+        generateValue: 8000
+      - key: PY_BASE
+        value: https://extruct-py.onrender.com/api
+
+  - type: web
+    name: extruct-web
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    envVars:
+      - key: PY_BASE
+        value: https://extruct-py.onrender.com/api
+    # Vercel alternative: set PY_BASE env var to backend URL
