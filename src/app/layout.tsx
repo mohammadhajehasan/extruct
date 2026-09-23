@@ -1,21 +1,7 @@
 import type { Metadata } from "next";
-import { Cairo, Roboto } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
-
-/* Material Design: Roboto للاتينية والأرقام، Cairo احتياطاً للعربية */
-const roboto = Roboto({
-  variable: "--font-roboto",
-  subsets: ["latin"],
-  weight: ["400", "500", "700"],
-});
-
-const cairo = Cairo({
-  variable: "--font-cairo",
-  subsets: ["arabic", "latin"],
-  weight: ["400", "600", "700"],
-});
 
 export const metadata: Metadata = {
   title: "المستخرج الأسطوري v7.1",
@@ -36,7 +22,7 @@ export default function RootLayout({
       lang="ar"
       dir="rtl"
       suppressHydrationWarning
-      className={`${roboto.variable} ${cairo.variable}`}
+      className="font-sans"
     >
       <body className="antialiased bg-background text-foreground font-sans">
         <ThemeProvider
