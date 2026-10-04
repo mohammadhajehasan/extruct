@@ -6,6 +6,7 @@ services:
     env: python
     region: oregon
     plan: free
+    rootDir: mini-services/py-extractor
     buildCommand: pip install -r requirements.txt
     startCommand: python -m uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
@@ -13,15 +14,23 @@ services:
         generateValue: 8000
       - key: PY_BASE
         value: https://extruct-py.onrender.com/api
+      - key: REDIS_URL
+        databaseName: extruct_redis
 
   - type: web
     name: extruct-web
     env: node
     region: oregon
     plan: free
+    rootDir: extruct
     buildCommand: npm ci && npm run build
-    startCommand: npm start
+    startCommand: next start
     envVars:
-      - key: PY_BASE
+      - key: PY_EXTRACTOR_URL
         value: https://extruct-py.onrender.com/api
-    # Vercel alternative: set PY_BASE env var to backend URL
+      - key: NODE_VERSION
+        value: "22"
+      - key: PORT
+        value: "3000"
+      - key: REDIS_URL
+        databaseName: extruct_redis
