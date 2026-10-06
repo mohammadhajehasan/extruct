@@ -55,7 +55,7 @@ async function proxy(req: NextRequest, ctx: { params: Promise<{ path: string[] }
     if (!HOP_BY_HOP.has(key.toLowerCase())) resHeaders.set(key, value);
   });
 
-  const data = await res.arrayBuffer();
+  const data = await res.blob();
   return new NextResponse(data, { status: res.status, headers: resHeaders });
 }
 
