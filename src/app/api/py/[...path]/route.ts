@@ -55,30 +55,9 @@ async function proxy(req: NextRequest, ctx: { params: Promise<{ path: string[] }
     if (!HOP_BY_HOP.has(key.toLowerCase())) resHeaders.set(key, value);
   });
 
-  // Read full stream to avoid truncation
-  const reader = res.body?.getReader();
-  if (!reader) {
-    return new NextResponse(null, { status: res.status, headers: resHeaders });
-  }
-
-  const chunks: Uint8Array[] = [];
-  let done = false;
-  while (!done) {
-    const { done: d, value } = await reader.read();
-    done = d;
-    if (value) chunks.push(value);
-  }
-
-  let totalLength = 0;
-  for (const chunk of chunks) totalLength += chunk.length;
-  const data = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    data.set(chunk, offset);
-    offset += chunk.length;
-  }
-
-  return new NextResponse(data, { status: res.status, headers: resHeaders });
+  // Read as text to ensure full body is consumed (handles chunked encoding)
+  const text = await res.text();
+  return new NextResponse(text, { status: res.status, headers: resHeaders });
 }
 
 export const GET = proxy;
