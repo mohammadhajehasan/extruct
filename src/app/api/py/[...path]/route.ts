@@ -44,7 +44,10 @@ async function proxy(req: NextRequest, ctx: { params: Promise<{ path: string[] }
 
   let res: Response;
   try {
-    res = await fetch(target, { method, headers, body, cache: 'no-store' });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000);
+    res = await fetch(target, { method, headers, body, cache: 'no-store', signal: controller.signal });
+    clearTimeout(timeoutId);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'تعذر الاتصال بخدمة الاستخراج';
     return NextResponse.json({ ok: false, error: `خدمة Python غير متاحة: ${message}` }, { status: 502 });
