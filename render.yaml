@@ -33,7 +33,7 @@ services:
     startCommand: npm start
     envVars:
       - key: PY_EXTRACTOR_URL
-        value: https://extruct-py.onrender.com/api
+        value: https://extruct.onrender.com/api
       - key: NODE_VERSION
         value: "22"
       - key: PORT
