@@ -60,36 +60,17 @@ async function proxy(req: NextRequest, ctx: { params: Promise<{ path: string[] }
     if (!HOP_BY_HOP.has(key.toLowerCase())) resHeaders.set(key, value);
   });
 
-  // Parse JSON and re-serialize to avoid chunked encoding truncation
-  // Read full stream to avoid truncation
-  const reader = res.body?.getReader();
-  if (!reader) {
-    return new NextResponse(null, { status: res.status, headers: resHeaders });
-  }
+  // Read full response as ArrayBuffer to avoid chunked encoding truncation
+  const buffer = await res.arrayBuffer();
+  const text = new TextDecoder().decode(buffer);
 
-  const chunks: Uint8Array[] = [];
-  let done = false;
-  while (!done) {
-    const { done: d, value } = await reader.read();
-    done = d;
-    if (value) chunks.push(value);
-  }
-
-  let totalLength = 0;
-  for (const chunk of chunks) totalLength += chunk.length;
-  const data = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    data.set(chunk, offset);
-    offset += chunk.length;
-  }
-
-  const text = new TextDecoder().decode(data);
+  // Try to parse as JSON first; if it fails, return raw bytes (for binary exports like xlsx/csv)
   try {
     const jsonData = JSON.parse(text);
     return NextResponse.json(jsonData, { status: res.status, headers: resHeaders });
   } catch {
-    return new NextResponse(text, { status: res.status, headers: resHeaders });
+    // Binary or non-JSON response — return raw bytes
+    return new NextResponse(buffer, { status: res.status, headers: resHeaders });
   }
 }
 
