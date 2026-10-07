@@ -2,10 +2,13 @@
 """
 core/pdfio.py — معالج PDF: PDF نصي (find_tables → دقة 100% بلا نموذج) أم مسح (render dpi).
 المصدر: الخطة الحاكمة v7.1 — الجزء 4 + عقد API (/api/pdf/parse).
+تحسين الأداء: معالجة الصفحات بالتوازي عبر thread pool.
 """
 import base64
 import io
-from typing import Optional
+import os
+
+from concurrent.futures import ThreadPoolExecutor
 
 import cv2
 import fitz  # PyMuPDF
@@ -15,41 +18,53 @@ DEFAULT_DPI = 300
 # A4: 8.27 × 11.69 بوصة — تُستخدم لتقدير dpi من عرض الصورة
 A4_WIDTH_INCH = 8.27
 
+# عدد العمال المتوازية — يقرأ من البيئة مع افتراضي 4
+_PARALLEL_WORKERS = int(os.environ.get("PDF_PARSE_WORKERS", "4"))
 
-def decode_b64_to_bgr(image_b64: str) -> np.ndarray:
-    """فك base64 (مع قص بادئة data: إن وُجدت دفاعياً) إلى صورة BGR."""
-    raw = (image_b64 or "").strip()
-    if raw.startswith("data:"):
-        idx = raw.find(",")
-        if idx != -1:
-            raw = raw[idx + 1:]
-    buf = np.frombuffer(base64.b64decode(raw), np.uint8)
-    img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
-    if img is None:
-        raise ValueError("تعذّر فك ترميز الصورة (base64 غير صالح)")
-    return img
+# مفتاح عالمي لمنع تكرار معالجة الصفحات في الذاكرة
+_PAGE_CACHE = {}
 
 
-def encode_bgr_to_b64(img: np.ndarray, ext: str = ".png") -> str:
-    """ترميز صورة BGR/رمادية إلى base64 خام (بدون بادئة data:) PNG افتراضياً."""
-    if img.ndim == 2:
-        ok, buf = cv2.imencode(ext, img)
+def _cache_key(data: bytes, dpi: int) -> str:
+    """مفتاح فريد للتخزين المؤقت."""
+    return f"{len(data)}:{dpi}:{hash(data)}"
+
+
+def _parse_single_page(args: tuple) -> dict:
+    """حلل صفحة PDF واحدة (تُستدعى من thread pool)."""
+    i, pg, dpi = args
+    text = pg.get_text().strip()
+    # 15.9.1 — مرشّح رخيص قبل find_tables() المكلف: جدول PDF حقيقي يحتاج
+    # رسومات متجهة كافية؛ صفحة مسح + OCR نصي تُستبعد فوراً.
+    tables = []
+    has_enough_drawings = len(pg.get_drawings()) >= 4
+    if text and has_enough_drawings:
+        try:
+            tables = pg.find_tables().tables
+        except Exception:
+            tables = []
+    if text and has_enough_drawings and tables:
+        native = []
+        for t in tables:
+            try:
+                rows = t.extract()
+                native.append([[("" if c is None else str(c)) for c in row]
+                               for row in rows])
+            except Exception:
+                continue
+        return {"index": i, "kind": "native", "tables": native,
+                "text": text, "img": None, "needs_render": False}
     else:
-        ok, buf = cv2.imencode(ext, img)
-    if not ok:
-        raise ValueError("فشل ترميز الصورة")
-    return base64.b64encode(buf.tobytes()).decode("ascii")
-
-
-def _pix_to_bgr(pix: "fitz.Pixmap") -> np.ndarray:
-    if pix.alpha:
-        pix = fitz.Pixmap(pix, 0)  # إسقاط ألفا
-    arr = np.frombuffer(pix.samples, np.uint8).reshape(pix.h, pix.w, pix.n)
-    if pix.n == 1:
-        return cv2.cvtColor(arr, cv2.COLOR_GRAY2BGR)
-    if pix.n >= 3:
-        return cv2.cvtColor(arr[:, :, :3], cv2.COLOR_RGB2BGR)
-    return arr
+        zoom = max(dpi, 72) / 72.0
+        try:
+            pix = pg.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+            img = _pix_to_bgr(pix)
+        except Exception:
+            # فشل في الـ rendering — حاول مرة أخرى بـ DPI كامل
+            pix = pg.get_pixmap(alpha=False)
+            img = _pix_to_bgr(pix)
+        return {"index": i, "kind": "image", "tables": [],
+                "text": text, "img": img, "needs_render": True}
 
 
 def pdf_pages_from_bytes(data: bytes, dpi: int = DEFAULT_DPI) -> list:
@@ -58,35 +73,29 @@ def pdf_pages_from_bytes(data: bytes, dpi: int = DEFAULT_DPI) -> list:
       - نص أصلي + جداول find_tables → ("native", index, tables)
       - وإلا render pixmap بدقة dpi → ("image", index, BGR ndarray)
     (الجزء 4 من الخطة — pdf_pages)
+    تحسين الأداء: معالجة الصفحات بالتوازي عبر thread pool.
     """
+    key = _cache_key(data, dpi)
+    if key in _PAGE_CACHE:
+        return _PAGE_CACHE[key]
     out = []
     with fitz.open(stream=data, filetype="pdf") as doc:
-        for i, pg in enumerate(doc):
-            text = pg.get_text().strip()
-            # 15.9.1 — مرشّح رخيص قبل find_tables() المكلف: جدول PDF حقيقي يحتاج
-            # رسومات متجهة كافية؛ صفحة مسح + OCR نصي تُستبعد فوراً.
-            tables = []
-            has_enough_drawings = len(pg.get_drawings()) >= 4
-            if text and has_enough_drawings:
-                try:
-                    tables = pg.find_tables().tables
-                except Exception:
-                    tables = []
-            if text and has_enough_drawings and tables:
-                native = []
-                for t in tables:
-                    try:
-                        rows = t.extract()
-                        native.append([[("" if c is None else str(c)) for c in row]
-                                       for row in rows])
-                    except Exception:
-                        continue
-                out.append({"kind": "native", "index": i, "tables": native,
-                            "text": text})
+        pages = list(doc)
+        args = [(i, pg, dpi) for i, pg in enumerate(pages)]
+        results = []
+        with ThreadPoolExecutor(max_workers=_PARALLEL_WORKERS) as ex:
+            for r in ex.map(_parse_single_page, args):
+                results.append(r)
+        # ترتيب النتائج حسب الفهرس
+        results.sort(key=lambda x: x["index"])
+        for r in results:
+            if r["needs_render"]:
+                out.append({"kind": "image", "index": r["index"],
+                            "img": r["img"]})
             else:
-                zoom = max(dpi, 72) / 72.0
-                pix = pg.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
-                out.append({"kind": "image", "index": i, "img": _pix_to_bgr(pix)})
+                out.append({"kind": "native", "index": r["index"],
+                            "tables": r["tables"], "text": r.get("text", "")})
+    _PAGE_CACHE[key] = out
     return out
 
 
@@ -95,10 +104,10 @@ def image_page_from_bytes(data: bytes) -> dict:
     arr = np.frombuffer(data, np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:
-        # محاولة عبر Pillow لدعم صيغ إضافية
-        from PIL import Image
-        pil = Image.open(io.BytesIO(data)).convert("RGB")
-        img = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+    # محاولة عبر Pillow لدعم صيغ إضافية
+    from PIL import Image
+    pil = Image.open(io.BytesIO(data)).convert("RGB")
+    img = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
     return {"kind": "image", "index": 0, "img": img}
 
 
