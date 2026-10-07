@@ -35,6 +35,8 @@ async function proxy(req: NextRequest, ctx: { params: Promise<{ path: string[] }
   if (ct) headers.set('content-type', ct);
   const accept = req.headers.get('accept');
   if (accept) headers.set('accept', accept);
+  // Disable chunked encoding to avoid truncation
+  headers.set('accept-encoding', 'identity');
 
   const method = req.method.toUpperCase();
   let body: ArrayBuffer | undefined;
