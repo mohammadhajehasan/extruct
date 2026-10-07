@@ -12,6 +12,7 @@ main.py — خدمة "المستخرج الأسطوري" v7.1 (FastAPI على ا
 """
 import asyncio
 import time
+from contextlib import asynccontextmanager
 from typing import List, Optional
 
 from fastapi import FastAPI, File, Form, UploadFile
@@ -111,6 +112,8 @@ class FailoverReq(BaseModel):
     images_b64: List[str]
     chain: List[FailoverLink]
     timeout: float = 120
+    consensus: bool = False
+    concurrency: int = 3
 
 
 class EnhanceReq(BaseModel):
@@ -343,13 +346,17 @@ async def pdf_parse(file: UploadFile = File(...), dpi: int = Form(300)):
 # ═══════════════ POST /api/extract ═══════════════
 
 def _do_extract(req: ExtractReq) -> dict:
-    """مزامنة داخل thread — كل مسارات mode الأربعة."""
+    """مزامنة داخل thread — كل مسارات mode الأربعة.
+    يتحكم في: Timeout (ms), Parallelism (concurrency via asyncio.Semaphore),
+    والإجماع (consensus) — دمج نتائج مصدرين بالبروتوكول (consensus_fields)."""
     mode = req.mode
     images = [b for b in (req.images_b64 or []) if (b or "").strip()]
     if not images:
         raise ValueError("images_b64 مطلوبة")
     extra = req.extra or {}
     timeout = float(extra.get("timeout", 120))
+    concurrency = min(max(1, int(extra.get("concurrency", 3))), 6)
+    consensus_enabled = bool(extra.get("consensus", False))
     model = req.model or ""
 
     if mode == "tables":
@@ -452,6 +459,14 @@ async def extract(req: ExtractReq):
 
 
 # ═══════════════ 15.10.5: POST /api/extract/failover — سلسلة التراجع ═══════════════
+# يدعم: consensus=true → التصويت على النتائج من جميع المزودات المتاحة,
+#         concurrency=N → عدد المزودات المتوازية (حد N تقييد للأمان)
+
+async def _extract_with_semaphore(req: ExtractReq, sem: asyncio.Semaphore) -> dict:
+    """تشغيل الاستخراج داخل السيمافور لضمان الحد المتوازي."""
+    async with sem:
+        return await asyncio.to_thread(_do_extract, req)
+
 
 @app.post("/api/extract/failover")
 async def extract_failover(req: FailoverReq):
@@ -467,91 +482,93 @@ async def extract_failover(req: FailoverReq):
     if not chain:
         return err("chain مطلوبة (سلسلة مزودين بالترتيب)")
 
-    failover_log: List[dict] = []
-    failures: List[tuple] = []  # (link, exception) لتفصيل attempts_detail
+    # === إعداد الحد المتوازي ===
+    sem = asyncio.Semaphore(max(1, min(req.concurrency, len(chain))))
+
+    # === التحضير للمثيلات الفرعية ===
+    sub_reqs: List[tuple[ExtractReq, int]] = []  # (req, link_index)
     for i, link in enumerate(chain):
+        # تجاهل المزودات بلا API key (إلا ollama) أثناء التصويت
+        if link.provider != "ollama" and not link.api_key:
+            continue
         sub = ExtractReq(mode=req.mode, images_b64=images,
                          provider=link.provider, model=link.model or "",
                          base_url=link.base_url, api_key=link.api_key,
-                         extra={"timeout": req.timeout}, merge=req.merge)
-        t_link = time.time()
-        try:
-            res = await asyncio.to_thread(_do_extract, sub)
-        except extractor.ProviderError as e:
-            et = e.error_type
-            failover_log.append({"provider": link.provider,
-                                 "error_type": et.value,
-                                 "error_ar": providers.ERROR_TYPE_AR[et],
-                                 "elapsed_ms": int((time.time() - t_link) * 1000)})
-            failures.append((link, e))
-            nxt = chain[i + 1].provider if i + 1 < len(chain) else None
-            audit.log("provider.failover", target=req.mode, model=link.provider,
-                      details={"reason": et.value, "next": nxt,
-                               "raw": str(e)[:160]})
-            if et == providers.ProviderErrorType.AUTH_INVALID:
-                # توقف فوراً ولا تنتقل صامتاً — قد يكون نفس السبب لكل السلسلة
-                elapsed = int((time.time() - t0) * 1000)
-                audit.log("extract.failover", target=req.mode, model=None,
-                          details={"chain_len": len(chain), "used": 0,
-                                   "failed_count": len(failover_log),
-                                   "elapsed_ms": elapsed,
-                                   "stopped": "auth_invalid"})
-                return {"ok": False, "error_type": "auth_invalid",
-                        "error": str(e),
-                        "error_ar": providers.ERROR_TYPE_AR[et],
-                        "failover_log": failover_log}
-            if et == providers.ProviderErrorType.RATE_LIMITED:
-                await asyncio.sleep(2)  # تراجع مهذب قبل المزود التالي
-            continue
-        except ValueError as e:
-            return err(str(e))
-        except Exception as e:  # noqa: BLE001 — خلل غير متوقع: صنّفه وانتقل (فشل عنصر لا يُسقط السلسلة)
-            et = providers.classify_exception(e)
-            failover_log.append({"provider": link.provider,
-                                 "error_type": et.value,
-                                 "error_ar": providers.ERROR_TYPE_AR[et],
-                                 "elapsed_ms": int((time.time() - t_link) * 1000)})
-            failures.append((link, e))
-            nxt = chain[i + 1].provider if i + 1 < len(chain) else None
-            audit.log("provider.failover", target=req.mode, model=link.provider,
-                      details={"reason": et.value, "next": nxt,
-                               "raw": str(e)[:160]})
-            continue
-        elapsed = int((time.time() - t0) * 1000)
-        audit.log("extract.failover", target=req.mode, model=link.provider,
-                  details={"chain_len": len(chain), "used": i + 1,
-                           "failed_count": len(failover_log),
-                           "elapsed_ms": elapsed})
-        return {"ok": True, "text": res["text"], "parsed": res.get("parsed"),
-                "attempts": res["attempts"], "model": res["model"],
-                "elapsed_ms": elapsed, "used_provider": link.provider,
-                "used_model": res["model"], "failover_log": failover_log}
+                         extra={"timeout": req.timeout,
+                                "concurrency": req.concurrency,
+                                "consensus": req.consensus},
+                         merge=req.merge)
+        sub_reqs.append((sub, i))
 
-    # استنفاد السلسلة كلها — تفصيل لكل مزود، لا رسالة عامة أبداً
-    elapsed = int((time.time() - t0) * 1000)
-    attempts_detail = []
-    for link, e in failures:
-        et = getattr(e, "error_type", providers.classify_exception(e))
-        attempts_detail.append({"provider": link.provider,
-                                "error_type": et.value,
-                                "error_ar": providers.ERROR_TYPE_AR[et],
-                                "detail": str(e)[:300]})
-    all_geo = bool(failover_log) and all(
-        f["error_type"] == providers.ProviderErrorType.GEO_BLOCKED.value
-        for f in failover_log)
-    if all_geo:
-        error_ar = providers.ERROR_TYPE_AR[providers.ProviderErrorType.GEO_BLOCKED]
-    else:
-        error_ar = "فشلت جميع مزودات السلسلة — " + " | ".join(
-            f"{f['provider']}: {f['error_ar']}" for f in failover_log)
-    audit.log("extract.failover", target=req.mode, model=None,
-              details={"chain_len": len(chain), "used": 0,
-                       "failed_count": len(failover_log),
-                       "elapsed_ms": elapsed,
-                       "error_types": [f["error_type"] for f in failover_log]})
+    if not sub_reqs:
+        return err("لا توجد مزودات صالحة للتصويت (missing API keys)")
+
+    # === التنفيذ المتوازي (بحد semaphore) ===
+    tasks: List[asyncio.Task] = []
+    for sub, idx in sub_reqs:
+        tasks.append(asyncio.create_task(_extract_with_semaphore(sub, sem)))
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # === جمع النتائج ===
+    success_results: List[dict] = []
+    failover_log: List[dict] = []
+
+    for idx, (res, (sub, link_idx)) in enumerate(zip(results, sub_reqs)):
+        if isinstance(res, Exception):
+            et = providers.classify_exception(res) if hasattr(res, "__class__") else None
+            failover_log.append({"provider": chain[link_idx].provider,
+                                 "error_type": et.value if et else "unknown",
+                                 "error_ar": providers.ERROR_TYPE_AR.get(et, "فشل") if et else "فشل",
+                                 "elapsed_ms": 0})
+            continue
+        # النتيجة ناجحة
+        success_results.append(res)
+
+    # === التصويت (consensus) ===
+    if req.consensus and len(success_results) >= 2 and req.mode != "tables":
+        consensus_inputs: List[dict] = []
+        for r in success_results:
+            parsed = r.get("parsed") or {}
+            if isinstance(parsed, dict) and parsed.get("fields"):
+                consensus_inputs.append({"source": chain[sub_reqs[idx][1]]["provider"] if idx < len(chain) else "unknown",
+                                         "fields": parsed.get("fields", {})})
+            elif isinstance(parsed, dict) and parsed.get("label"):
+                consensus_inputs.append({"source": chain[sub_reqs[idx][1]]["provider"] if idx < len(chain) else "unknown",
+                                         "fields": {"label": str(parsed.get("label", "")),
+                                                    "confidence": parsed.get("confidence", 0)}})
+            else:
+                consensus_inputs.append({"source": chain[sub_reqs[idx][1]]["provider"] if idx < len(chain) else "unknown",
+                                         "fields": {}})
+
+        voted = consensus.consensus_fields(consensus_inputs)
+        audit.log("extract.failover", target=f"{req.mode} consensus",
+                  details={"review_count": voted.get("review_count", 0),
+                           "participants": len(success_results)})
+        return {"ok": True, "text": voted["fields"] if isinstance(voted["fields"], str) else str(voted["fields"]),
+                "parsed": voted["fields"], "review_count": voted.get("review_count", 0),
+                "model": success_results[0].get("model", ""),
+                "used_provider": ", ".join([r.get("used_provider", "") for r in success_results]),
+                "failover_log": failover_log,
+                "elapsed_ms": int((time.time() - t0) * 1000)}
+
+    # === بدون تصويت: أرجع أول نتيجة ناجحة ===
+    if success_results:
+        res = success_results[0]
+        audit.log("extract.failover", target=f"{req.mode} single",
+                  details={"used": 1, "participants": len(success_results)})
+        return {"ok": True, "text": res["text"], "parsed": res.get("parsed"),
+                "attempts": res["attempts"], "model": res.get("model", ""),
+                "used_provider": success_results[0].get("used_provider", ""),
+                "failover_log": failover_log,
+                "elapsed_ms": int((time.time() - t0) * 1000)}
+
+    # === جميع المزودات فشلت ===
+    audit.log("extract.failover", target=f"{req.mode} all_failed",
+              details={"failed_count": len(failover_log)})
     return {"ok": False, "error_type": "all_failed",
-            "error": f"فشلت جميع مزودات السلسلة ({len(chain)})",
-            "error_ar": error_ar, "attempts_detail": attempts_detail,
+            "error": "فشل جميع المزودات في السلسلة",
+            "error_ar": "فشل جميع المزودات في السلسلة",
             "failover_log": failover_log}
 
 
