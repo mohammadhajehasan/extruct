@@ -1,0 +1,42 @@
+databases:
+  - name: extruct_redis
+    plan: free
+    databaseName: extruct_system
+    ipAllowList: []
+    region: virginia
+    type: key_value
+
+services:
+  - type: web
+    name: extruct-py
+    env: python
+    region: virginia
+    plan: free
+    rootDir: mini-services/py-extractor
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PORT
+        generateValue: "8000"
+      - key: PY_BASE
+        value: https://extruct.onrender.com/api
+      - key: REDIS_URL
+        databaseName: extruct_redis
+
+  - type: web
+    name: extruct-web
+    env: node
+    region: virginia
+    plan: free
+    rootDir: extruct
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    envVars:
+      - key: PY_EXTRACTOR_URL
+        value: https://extruct-py.onrender.com/api
+      - key: NODE_VERSION
+        value: "22"
+      - key: PORT
+        value: "3000"
+      - key: REDIS_URL
+        databaseName: extruct_redis

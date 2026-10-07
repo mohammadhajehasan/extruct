@@ -1,0 +1,18 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  "indexing": {
+    "enabled": true
+  },
+  "mcp": {
+    "render": {
+      "command": "render-cli",
+      "args": [
+        "mcp-server"
+      ],
+      "environment": {
+        "RENDER_API_KEY": "rnd_nhNZSjNNlUQIOQzrbOWH1wAAPmM1"
+      },
+      "enabled": true
+    }
+  }
+}
