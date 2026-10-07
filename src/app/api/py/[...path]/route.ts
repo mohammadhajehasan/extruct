@@ -58,9 +58,15 @@ async function proxy(req: NextRequest, ctx: { params: Promise<{ path: string[] }
     if (!HOP_BY_HOP.has(key.toLowerCase())) resHeaders.set(key, value);
   });
 
-  // Read as text to ensure full body is consumed (handles chunked encoding)
+  // Parse JSON and re-serialize to avoid chunked encoding truncation
   const text = await res.text();
-  return new NextResponse(text, { status: res.status, headers: resHeaders });
+  try {
+    const data = JSON.parse(text);
+    return NextResponse.json(data, { status: res.status, headers: resHeaders });
+  } catch {
+    // If not JSON, return as-is
+    return new NextResponse(text, { status: res.status, headers: resHeaders });
+  }
 }
 
 export const GET = proxy;
