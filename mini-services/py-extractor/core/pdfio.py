@@ -122,6 +122,24 @@ def decode_b64_to_bgr(image_b64: str) -> np.ndarray:
     return img
 
 
+def _pix_to_bgr(pix) -> np.ndarray:
+    """تحويل PyMuPDF Pixmap إلى numpy.ndarray BGR."""
+    # PyMuPDF pixmap RGBA → تحويل إلى RGB ثم BGR
+    s = pix.samples
+    if pix.alpha:
+        # has alpha channel
+        w, h = pix.width, pix.height
+        rgba = np.frombuffer(s, dtype=np.uint8).reshape(h, w, 4)
+        rgb = rgba[..., :3]
+        bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    else:
+        # no alpha
+        w, h = pix.width, pix.height
+        rgb = np.frombuffer(s, dtype=np.uint8).reshape(h, w, 3)
+        bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    return bgr
+
+
 def image_page_from_bytes(data: bytes) -> dict:
     """ملف صورة غير PDF → صفحة واحدة kind=image."""
     arr = np.frombuffer(data, np.uint8)
