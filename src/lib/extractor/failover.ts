@@ -34,56 +34,45 @@ export interface SmartExtractResult {
  * الفشل يُرمى كما هو (PyApiError عند تصنيف الخلفية) — العرض في المستدعي.
  */
 export function smartExtract(args: {
-  mode: "tables" | "mechanic" | "classify" | "verify";
-  imagesB64: string[];
-  timeout?: number;
-  /** tables: true → جميع الصور المرفقة جدول واحد (TABLES_MERGE_PROMPT) */
-  merge?: boolean;
-}): Promise<SmartExtractResult> {
-  const { settings, providerStatuses } = useExtractorStore.getState();
-  const { provider, model, baseUrl, failoverEnabled } = settings;
-  // تخصيص المفاتيح: مفتاح المزود النشط هو مفتاحه هو فقط (persist v2)
-  const apiKey = getProviderKey(settings, provider);
-
-  if (failoverEnabled) {
-    const chain: FailoverChainItem[] = [
-      {
-        provider,
-        model,
-        base_url: baseUrl || undefined,
-        api_key: apiKey || undefined,
-      },
-    ];
-    // 15.10.6: Ollama المحلي آخر حلقة — فقط إن أثبت الفحص الإقليمي توفره ولديه نموذج مقترح
-    if (provider !== "ollama") {
-      const ollama = providerStatuses["ollama"];
-      if (ollama?.available && ollama.suggested_model) {
-        chain.push({
-          provider: "ollama",
-          model: ollama.suggested_model,
-          base_url: OLLAMA_BASE_URL,
-        });
-      }
-    }
-    return extractWithFailover({
-      mode: args.mode,
-      imagesB64: args.imagesB64,
-      chain,
-      timeout: args.timeout,
-      merge: args.merge,
-    });
-  }
-
-  return extract({
-    mode: args.mode,
-    imagesB64: args.imagesB64,
-    provider,
-    model,
-    baseUrl: baseUrl || undefined,
-    apiKey: apiKey || undefined,
-    merge: args.merge,
-  });
-}
+   mode: "tables" | "mechanic" | "classify" | "verify";
+   imagesB64: string[];
+   timeout?: number;
+   /** tables: true → جميع الصور المرفقة جدول واحد (TABLES_MERGE_PROMPT) */
+   merge?: boolean;
+   /** عدد المسارات المتوازية في الخلفة (يتجاوز الإعداد) */
+   concurrency?: number;
+   /** تفعيل الإجماع — يحسب فقط للتوضيح المنظم (mechanic/classify/verify) */
+   consensus?: boolean;
+ }): Promise<SmartExtractResult> {
+   const { settings, providerStatuses } = useExtractorStore.getState();
+   const { provider, model, baseUrl, failoverEnabled, consensusEnabled, concurrency } = settings;
+   // تخصيص المفاتيح: مفتاح المزود النشط هو مفتاحه هو فقط (persist v2)
+   const apiKey = getProviderKey(settings, provider);
+   const effectiveConcurrency = args.concurrency ?? concurrency ?? 3;
+   const effectiveConsensus = args.consensus ?? consensusEnabled ?? false;
+   // تسلسل التراجع: المزود النشط + Ollama إن متاح
+   if (failoverEnabled) {
+     const chain: FailoverChainItem[] = [
+       { provider, model, base_url: baseUrl || undefined, api_key: apiKey || undefined },
+     ];
+     if (provider !== "ollama") {
+       const ollama = providerStatuses["ollama"];
+       if (ollama?.available && ollama.suggested_model) {
+         chain.push({ provider: "ollama", model: ollama.suggested_model, base_url: OLLAMA_BASE_URL });
+       }
+     }
+     return extractWithFailover({
+       mode: args.mode, imagesB64: args.imagesB64, chain,
+       timeout: args.timeout, merge: args.merge,
+       concurrency: effectiveConcurrency, consensus: effectiveConsensus,
+     });
+   }
+   return extract({
+     mode: args.mode, imagesB64: args.imagesB64, provider, model,
+     baseUrl: baseUrl || undefined, apiKey: apiKey || undefined,
+     merge: args.merge, concurrency: effectiveConcurrency, consensus: effectiveConsensus,
+   });
+ }
 
 /** نص تنبيه التراجع عند النجاح بعد حلقات فاشلة — null إن كان النجاح مباشراً */
 export function failoverNotice(res: SmartExtractResult): string | null {
