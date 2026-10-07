@@ -113,7 +113,7 @@ export async function fetchModels(
   // ملاحظة: استجابة {ok:false, source:"fallback", models:[...]} ليست خطأ اتصال —
   // إنما قائمة احتياطية مقصودة من الخدمة مع رسالة السبب، فتُعاد كما هي
   // لتعرضها الواجهة (قائمة + تحذير). الخطأ يُرمى فقط عند فشل HTTP/الاتصال.
-  const res = await fetch(`${PY}/api/py/providers/models`, jsonInit("POST", { base_url: baseUrl, api_key: apiKey || undefined, timeout }));
+  const res = await fetch(`${PY}/providers/models`, jsonInit("POST", { base_url: baseUrl, api_key: apiKey || undefined, timeout }));
   let json: Json | null = null;
   try {
     json = (await res.json()) as Json;

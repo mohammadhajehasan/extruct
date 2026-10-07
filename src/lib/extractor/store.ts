@@ -59,7 +59,7 @@ export async function validateProviderKey(providerId: string, apiKey: string, ba
   // OAuth-2026: التحقق من المفتاح بإرساله إلى ping_provider الخاص بالمزود
   // يستقبل {available, error_type, error_ar} فقط ولا يُخزّن المفتاح
   try {
-    const res = await fetch(`${PY}/api/py/providers/health`, {
+    const res = await fetch(`${PY}/providers/health`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ base_url: baseUrl, api_key: apiKey, timeout: 10 })
@@ -662,7 +662,7 @@ export async function kbFewshot(field: string, wrong?: string): Promise<{
   shots: { wrong: string; right: string; count: number }[];
 }> {
   try {
-    const res = await fetch(`${PY}/api/py/kb/fewshot`, {
+    const res = await fetch(`${PY}/kb/fewshot`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ field, wrong })
@@ -680,7 +680,7 @@ export async function kbFewshot(field: string, wrong?: string): Promise<{
 
 export async function getProviderQuota(providerId: string, baseUrl: string, apiKey: string): Promise<{ remaining: number | null; limit: number | null; used: number | null; exhausted: boolean; status: string; errorAr?: string }> {
   try {
-    const res = await fetch(`${PY}/api/py/providers/quota`, {
+    const res = await fetch(`${PY}/providers/quota`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ base_url: baseUrl, api_key: apiKey, timeout: 8 })

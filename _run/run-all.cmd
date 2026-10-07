@@ -6,7 +6,7 @@ REM   _run\run-all.cmd
 REM
 REM يُشغّل:
 REM   1. Python FastAPI على http://127.0.0.1:8000
-REM   2. Next.js dev على http://localhost:3000 (يُ proxy /api/py/... إلى 8000)
+REM   2. Next.js dev على http://localhost:3000 (اتصال مباشر بالbackend على 8000)
 REM
 REM لوقفها: رُنّ _run\stop-all.cmd أو أغلقنوافذها.
 

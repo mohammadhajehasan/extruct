@@ -2,7 +2,7 @@
 
 // 15.10 المرونة الإقليمية — استخراج واعٍ للأخطاء وسلسلة التراجع
 // smartExtract: تقرأ الإعدادات وحالة المزودات من المخزن وتختار المسار المباشر
-// أو سلسلة التراجع (Ollama المحلي آخر حلقة) وفق عقد /api/py/extract/failover
+// أو سلسلة التراجع (Ollama المحلي آخر حلقة) وفق عقد /extract/failover
 
 import { toast } from "sonner";
 import { extract, extractWithFailover, PyApiError } from "./api";
