@@ -39,14 +39,14 @@ python -m uvicorn main:app --host 0.0.0.0 --port 8000
 npm run dev
 ```
 
-الأدوار عبر الوكيل: `/api/py/*` → `localhost:8000` (لم تعد تُستخدم — الاتصال المباشر الآن)
+الأدوار عبر الوكيل: `/api/py/*` → `localhost:8000`
 
 ### Windows — ملاحظات تشغيل ملزمة
 
 - **لا تستخدم `| tee dev.log` ولا صيغة `VAR=value cmd` في سكربتات npm**: على Windows يكون صدفة npm هي `cmd.exe` حيث `tee` غير موجود وصيغة المتغيرات غير مدعومة، فيتعطّل السكربت.
 - لذلك يعتمد `npm run dev` على `scripts/dev.js` و`npm start` على `scripts/start-web.js` (يمرّران الخرج إلى الطرفية وإلى `dev.log`/`server.log` معاً عبر Node، وتعمل على Windows و Linux/macOS).
 - `npm start` يحتاج بناءً أولاً: `npm run build` ثم `npm start` (يقرأ `.next/standalone/server.js`).
-- تحقق سريع: `http://localhost:3000` للواجهة و`http://127.0.0.1:8000/api/health` للخدمة، والاتصال المباشر عبر `http://127.0.0.1:8000/api/health` (الوكيل /api/py/ لم يعد مُستخدم).
+- تحقق سريع: `http://localhost:3000` للواجهة و`http://127.0.0.1:8000/api/health` للخدمة، والاتصال المباشر (الوكيل /api/py/ لم يعد مُستخدم).
 - القدرات الاختيارية: OCR يحتاج Tesseract مثبتاً على النظام، والباركود يحتاج DLL الخاصة بـ zbar. عند غيابها يظهر `capabilities: { ocr:false, barcode:false }` في نقطة الصحة ويبقى النظام يعمل.
 
 ## الإعداد / Configuration

@@ -14,7 +14,7 @@ $ErrorActionPreference = "Stop"
 $ROOT = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $ROOT = Resolve-Path (Join-Path $ROOT "..")
 $PY_DIR = Join-Path $ROOT "mini-services\py-extractor"
-$WEB_DIR = Join-Path $ROOT
+$WEB_DIR = $ROOT
 
 Write-Host "=== extruct local stack ===" -ForegroundColor Cyan
 Write-Host "ROOT: $ROOT" -ForegroundColor DarkGray
