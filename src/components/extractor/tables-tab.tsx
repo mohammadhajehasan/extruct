@@ -211,8 +211,8 @@ export function TablesTab() {
       if (!opts?.silent) setExtractingId(imageId);
       setExtractStartedAt(Date.now());
       try {
-        const b64s = await Promise.all(pending.map((item) => getExtractB64(item)));
-        const res = await smartExtract({ mode: "tables", imagesB64: b64s, merge: true });
+         const b64s = await Promise.all(pending.map((item) => getExtractB64(item)));
+         const res = await smartExtract({ mode: "tables", imagesB64: b64s, merge: true, concurrency: settings.concurrency, consensus: settings.consensusEnabled });
         const csv = cleanCsvText(res.text);
         if (!csv || csv.trim() === "-" || csv.trim() === "") {
           throw new Error("النتيجة المستخرجة غير valide (نص غير CSV)");
@@ -252,6 +252,8 @@ export function TablesTab() {
         mode: "tables",
         imagesB64: [b64],
         merge: false,
+        concurrency: settings.concurrency,
+        consensus: settings.consensusEnabled,
       });
       const csv = cleanCsvText(res.text);
       // تحقق من أن النتيجة ليست فارغة أو مجرد "-"
@@ -343,8 +345,8 @@ addFailure({
       setBatchDone(0);
       setExtractStartedAt(Date.now());
       try {
-        const b64s = await Promise.all(pending.map((item) => getExtractB64(item)));
-        const res = await smartExtract({ mode: "tables", imagesB64: b64s, merge: true });
+         const b64s = await Promise.all(pending.map((item) => getExtractB64(item)));
+         const res = await smartExtract({ mode: "tables", imagesB64: b64s, merge: true, concurrency: settings.concurrency, consensus: settings.consensusEnabled });
         const csv = cleanCsvText(res.text);
         if (!csv || csv.trim() === "-" || csv.trim() === "") {
           throw new Error("النتيجة المستخرجة غير صالح (نص غير CSV)");
@@ -389,8 +391,8 @@ addFailure({
 
     for (const group of groupArray) {
       try {
-        const b64s = await Promise.all(group.map((item) => getExtractB64(item)));
-        const res = await smartExtract({ mode: "tables", imagesB64: b64s });
+         const b64s = await Promise.all(group.map((item) => getExtractB64(item)));
+         const res = await smartExtract({ mode: "tables", imagesB64: b64s, concurrency: settings.concurrency, consensus: settings.consensusEnabled });
         const csv = cleanCsvText(res.text);
         if (!csv || csv.trim() === "-" || csv.trim() === "") continue;
         const grid = parseCsvSimple(csv);

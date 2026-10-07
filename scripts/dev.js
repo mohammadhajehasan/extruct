@@ -29,7 +29,7 @@ log.write(`\n===== dev start ${new Date().toISOString()} (port ${port}) =====\n`
 const child = spawn(process.execPath, [nextBin, 'dev', '-p', port], {
   cwd: root,
   stdio: ['inherit', 'pipe', 'pipe'],
-  env: process.env,
+  env: { ...process.env, NEXT_PUBLIC_PY_BASE: process.env.NEXT_PUBLIC_PY_BASE || 'http://127.0.0.1:8000/api' },
 });
 
 /** تمرير الخرج إلى الطرفية + ملف السجل معاً (بديل tee عبر المنصات) */

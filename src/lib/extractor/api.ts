@@ -1,24 +1,20 @@
 // عميل خدمة Python — المستخرج الأسطوري v7.1
-// وفق عقد API: كل الاستداءات عبر مسار /api/py/... (وكيل شفاف في Next.js — بدون منفذ صريح أو localhost في كود العميل)
-//
-// PY = "" → مسافة نسبية (/api/py/...) تُكمل تلقائياً بالمنصة الحالية:
-//   - محلياً: Next.js يُ proxyl إلى http://127.0.0.1:8000/api عبر route.ts
-//   - على Netlify/استضافة ثابتة: لا يوجد خادم Next.js، لذا تُستخدم NEXT_PUBLIC_PY_BASE
-//     (مثلاً https://extruct.onrender.com/api) كعنوان مطلق للbackend.
+// لكل الاستداءات عنوان مطلق لـ backend (PY_EXTRACTOR_URL / NEXT_PUBLIC_PY_BASE)
+// بدون بروكسي — يربط الخادم مباشرة:
+//   - محلياً: NEXT_PUBLIC_PY_BASE=http://127.0.0.1:8000/api (افتراضي إذا لم يُضبط)
+//   - Render:   PY_EXTRACTOR_URL=https://extruct.onrender.com/api
+//   - Netlify:  NEXT_PUBLIC_PY_BASE=https://extruct.onrender.com/api
 
 import type { FailoverLogEntry, ProviderStatus } from "./types";
 
 /**
- * عنوان backend المستخدم من العميل:
- * - فارغ/غير مُحدد → مسافة نسبية (/api/py/...) تُكمل تلقائياً بالمنصة الحالية:
- *   - محلياً: Next.js يُ proxyl إلى http://127.0.0.1:8000/api عبر route.ts
- *   - على استضافة ثابتة (Netlify static export): لا يوجد Next.js server، لذا يجب
- *     تمرير عنوان مطلق عبر NEXT_PUBLIC_PY_BASE أو PY_EXTRACTOR_URL
- *     (مثلاً https://extruct.onrender.com/api).
+ * عنوان backend المستخدم من العميل (عنوان مطلق):
+ * - NEXT_PUBLIC_PY_BASE أو PY_EXTRACTOR_URL (مثلاً https://extruct.onrender.com/api)
+ * - افتراضياً: http://127.0.0.1:8000/api (محلي)
  */
 const raw =
-  (process.env.NEXT_PUBLIC_PY_BASE || process.env.PY_EXTRACTOR_URL || "").trim();
-export const PY = raw ? raw.replace(/\/$/, "") : "";
+  (process.env.NEXT_PUBLIC_PY_BASE || process.env.PY_EXTRACTOR_URL || "http://127.0.0.1:8000/api").trim();
+export const PY = raw.replace(/\/$/, "");
 
 type Json = Record<string, unknown>;
 
@@ -44,7 +40,7 @@ export class PyApiError extends Error {
 }
 
 async function pyFetch<T = Json>(path: string, options: RequestInit = {}): Promise<T> {
-  const url = `${PY}/api/py/${path}`;
+  const url = `${PY}/${path}`;
   const res = await fetch(url, options);
   let json: Json | null = null;
   try {
@@ -165,30 +161,40 @@ export async function parsePdf(file: File, dpi = 300): Promise<{
 }
 
 export async function extract(args: {
-  mode: "tables" | "mechanic" | "classify" | "verify";
-  imagesB64: string[];
-  provider: string;
-  model: string;
-  baseUrl?: string;
-  apiKey?: string;
-  extra?: Record<string, unknown>;
-  /** tables: true → جميع الصور المرفقة جدول واحد (TABLES_MERGE_PROMPT) */
-  merge?: boolean;
+   mode: "tables" | "mechanic" | "classify" | "verify";
+   imagesB64: string[];
+   provider: string;
+   model: string;
+   baseUrl?: string;
+   apiKey?: string;
+   extra?: Record<string, unknown>;
+   /** tables: true → جميع الصور المرفقة جدول واحد (TABLES_MERGE_PROMPT) */
+   merge?: boolean;
+   /** عدد المسارات المتوازية للمعالجة داخل الخلفة */
+   concurrency?: number;
+   /** تفعيل إجماع النموذجين للنتائج المنظمة */
+   consensus?: boolean;
 }): Promise<{ text: string; parsed?: unknown; attempts: number; model: string; elapsed_ms: number }> {
-  return pyFetch(
-    "extract",
-    jsonInit("POST", {
-      mode: args.mode,
-      images_b64: args.imagesB64,
-      provider: args.provider,
-      model: args.model,
-      base_url: args.baseUrl || undefined,
-      api_key: args.apiKey || undefined,
-      extra: args.extra || undefined,
-      merge: args.merge || undefined,
-    })
-  );
-}
+   // Merge concurrency and consensus into extra for backward compatibility
+   const mergedExtra = {
+     ...(args.extra || {}),
+     ...(args.concurrency !== undefined ? { concurrency: args.concurrency } : {}),
+     ...(args.consensus !== undefined ? { consensus: args.consensus } : {}),
+   };
+   return pyFetch(
+     "extract",
+     jsonInit("POST", {
+       mode: args.mode,
+       images_b64: args.imagesB64,
+       provider: args.provider,
+       model: args.model,
+       base_url: args.baseUrl || undefined,
+       api_key: args.apiKey || undefined,
+       extra: mergedExtra,
+       merge: args.merge || undefined,
+     })
+   );
+ }
 
 // ---------- 15.10 المرونة الإقليمية: فحص توفر المزودين (Health Check) ----------
 
@@ -261,38 +267,43 @@ export interface FailoverChainItem {
  * الفشل يعود PyApiError (errorType/errorAr + payload يحوي failover_log أو attempts_detail).
  */
 export async function extractWithFailover(args: {
-  mode: "tables" | "mechanic" | "classify" | "verify";
-  imagesB64: string[];
-  chain: FailoverChainItem[];
-  timeout?: number;
-  /** tables: true → جميع الصور المرفقة جدول واحد (TABLES_MERGE_PROMPT) */
-  merge?: boolean;
+   mode: "tables" | "mechanic" | "classify" | "verify";
+   imagesB64: string[];
+   chain: FailoverChainItem[];
+   timeout?: number;
+   /** tables: true → جميع الصور المرفقة جدول واحد (TABLES_MERGE_PROMPT) */
+   merge?: boolean;
+   concurrency?: number;
+   consensus?: boolean;
 }): Promise<{
-  text: string;
-  parsed?: unknown;
-  attempts: number;
-  model: string;
-  elapsed_ms: number;
-  used_provider: string;
-  used_model: string;
-  failover_log: FailoverLogEntry[];
+   text: string;
+   parsed?: unknown;
+   attempts: number;
+   model: string;
+   elapsed_ms: number;
+   used_provider: string;
+   used_model: string;
+   failover_log: FailoverLogEntry[];
 }> {
-  return pyFetch(
-    "extract/failover",
-    jsonInit("POST", {
-      mode: args.mode,
-      images_b64: args.imagesB64,
-      chain: args.chain.map((c) => ({
-        provider: c.provider,
-        model: c.model,
-        base_url: c.base_url || undefined,
-        api_key: c.api_key || undefined,
-      })),
-      timeout: args.timeout ?? 120,
-      merge: args.merge || undefined,
-    })
-  );
-}
+   const body: Json = {
+     mode: args.mode,
+     images_b64: args.imagesB64,
+     chain: args.chain.map((c) => ({
+       provider: c.provider,
+       model: c.model,
+       base_url: c.base_url || undefined,
+       api_key: c.api_key || undefined,
+     })),
+     timeout: args.timeout ?? 120,
+     merge: args.merge || undefined,
+   };
+   if (args.concurrency !== undefined) (body as Record<string, unknown>).concurrency = args.concurrency;
+   if (args.consensus !== undefined) (body as Record<string, unknown>).consensus = args.consensus;
+   return pyFetch(
+     "extract/failover",
+     jsonInit("POST", body)
+   );
+ }
 
 export async function groupFaces(items: { label: string; image_b64: string }[]): Promise<{
   groups: { category_ar: string; category_key: string; faces: string[]; method: "barcode" | "adjacency" }[];
@@ -360,7 +371,7 @@ export async function exportFile(
   headers: string[],
   rows: string[][]
 ): Promise<void> {
-  const res = await fetch(`${PY}/api/py/export`, {
+  const res = await fetch(`${PY}/export`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ kind, format, headers, rows }),

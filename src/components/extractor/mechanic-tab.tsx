@@ -162,6 +162,8 @@ const addReviewItem = useExtractorStore((s) => s.addReviewItem);
         const res = await smartExtract({
           mode: "classify",
           imagesB64: [b64],
+          concurrency: settings.concurrency,
+          consensus: settings.consensusEnabled,
         });
         const parsed = res.parsed as ClassifyParsed | undefined;
         const label =
@@ -240,6 +242,8 @@ const addReviewItem = useExtractorStore((s) => s.addReviewItem);
         const res = await smartExtract({
           mode: "mechanic",
           imagesB64: g.faces,
+          concurrency: settings.concurrency,
+          consensus: settings.consensusEnabled,
         });
         const parsed = (res.parsed as MechanicParsed | undefined) ?? {
           fields: {},
