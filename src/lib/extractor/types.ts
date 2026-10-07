@@ -183,7 +183,7 @@ export type EditorOp =
   | { op: "upscale"; params: { percent: number } };
 
 // ---------- 15.10 المرونة الإقليمية ----------
-// تصنيف أخطاء المزودات (لا رسالة عامة "فشل الاتصال") — وفق عقد /api/py/providers/health
+// تصنيف أخطاء المزودات (لا رسالة عامة "فشل الاتصال") — وفق عقد /providers/health
 // ملاحظة: مفتاح API لا يُخزَّن هنا إطلاقاً (بند 15.6) — الحالة فقط (available/error_type/host)
 export type ProviderErrorType =
   | "geo_blocked"
@@ -203,7 +203,7 @@ export interface ProviderStatus {
   checkedAt?: number;
 }
 
-/** حلقة فاشلة في سلسلة التراجع (15.10.5) — من عقد /api/py/extract/failover */
+/** حلقة فاشلة في سلسلة التراجع (15.10.5) — من عقد /extract/failover */
 export interface FailoverLogEntry {
   provider: string;
   error_type: ProviderErrorType | null;
