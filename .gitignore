@@ -1,48 +1,63 @@
-# Node
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
 node_modules/
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# generated artifacts
+screenshot*.png
+test_browser.py
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-pnpm-debug.log*
+.pnpm-debug.log*
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.pyo
-*.pyd
-*.cover
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+local-*
+.claude
+.z-ai-config
 *.log
-*.sqlite3
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-logs/
-*.pid
-
-# OS
-.DS_Store
-Thumbs.db
-
-# IDE
-.vscode/
-.idea/
-*.sublime-workspace
-*.sublime-project
-
-# Build outputs
-.next/
-out/
-dist/
-build/
+dev.log
+dev.out.log
+test
+prompt
 
 # Logs
 logs/
 *.log
+
+# Server-side rendered output
+.standalone/
 
 # Environment files
 .env*
@@ -56,4 +71,28 @@ test-results/
 # Temp
 *.tmp
 *.temp
-.DS_Store
+
+# Skills directory
+/skills/
+
+# python runtime
+__pycache__/
+*.pyc
+.venv/
+
+# runtime data & local db (may contain user data)
+/db/*.db
+/db/*.db-journal
+/mini-services/*/data/audit.jsonl
+
+# agent / sandbox artifacts
+/tool-results/
+/agent-ctx/
+/worklog.md
+/verify-*.png
+/download/verify-*.png
+/upload/pasted_image_*.png
+*.pid
+
+# Caddy
+Caddyfile
