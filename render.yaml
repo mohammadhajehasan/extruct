@@ -33,7 +33,7 @@ services:
     startCommand: npm start
     envVars:
       - key: NEXT_PUBLIC_PY_BASE
-        value: https://extruct-py.onrender.com/api
+        value: https://extruct-i2z8.onrender.com/api
       - key: NODE_VERSION
         value: "22"
       - key: PORT
