@@ -34,16 +34,19 @@ MODULES = ["pdfio", "providers", "extractor", "enhancer", "analyzer",
 
 app = FastAPI(title="المستخرج الأسطوري — py-extractor", version=VERSION)
 
-# CORS مفتوح للواجهة الأمامية (Netlify/Railway/localhost)
-# سيتم إضافة نطاقات الإنتاج بعد النشر
+# CORS للواجهة الأمامية على Render (frontend + backend على Render)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
-        "http://localhost:3001",  # alternative dev port
-        # نطاقات الإنتاج - سيتم تحديثها بعد النشر:
-        # Netlify frontend: https://your-site.netlify.app
-        # Railway backend self-reference (if needed): https://your-app.up.railway.app
+        "http://localhost:3001",
+        # Render production domains
+        "https://extruct-1.onrender.com",
+        "https://extruct.onrender.com",
+        "https://extruct-web.onrender.com",
+        # Backend service on Render (self-reference)
+        "https://extruct-i2z8.onrender.com",
+        "https://extruct-py.onrender.com",
     ],
     allow_credentials=True,
     allow_methods=["*"],

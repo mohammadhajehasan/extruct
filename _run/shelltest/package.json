@@ -1,0 +1,1 @@
+{"name":"shelltest","version":"1.0.0","private":true,"scripts":{"t":"echo hi 2>&1 | tee out.txt"}}
