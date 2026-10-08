@@ -41,6 +41,7 @@ app.add_middleware(
         "http://localhost:3000",
         "https://extruct-1.onrender.com",
         "https://extruct.onrender.com",
+        "https://extruct-web.onrender.com",
     ],
     allow_credentials=True,
     allow_methods=["*"],
