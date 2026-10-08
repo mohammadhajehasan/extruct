@@ -29,8 +29,8 @@ services:
     region: Frankfurt
     plan: free
     rootDir: extruct
-    buildCommand: npm ci && npm run build
-    startCommand: npm start
+    buildCommand: bun install && bun run build
+    startCommand: bun start
     envVars:
       - key: NEXT_PUBLIC_PY_BASE
         value: https://extruct-py.onrender.com/api
