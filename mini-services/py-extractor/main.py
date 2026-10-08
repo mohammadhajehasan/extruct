@@ -721,7 +721,7 @@ async def glossary_get():
 
 # ═══════════════ جذر الخدمة ═══════════════
 
-@app.get("/", methods=["GET", "HEAD"], include_in_schema=False)
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 async def root():
     return ok(service=SERVICE, version=VERSION,
               hint="كل النقاط تحت /api — انظر docs/api-contract.md")
