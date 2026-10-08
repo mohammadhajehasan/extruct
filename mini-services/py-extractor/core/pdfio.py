@@ -122,6 +122,12 @@ def decode_b64_to_bgr(image_b64: str) -> np.ndarray:
     return img
 
 
+def encode_bgr_to_b64(img: np.ndarray) -> str:
+    """تحويل مصفوفة BGR مفتوحة إلى base64."""
+    _, buf = cv2.imencode(".png", img)
+    return base64.b64encode(buf.tobytes()).decode()
+
+
 def _pix_to_bgr(pix) -> np.ndarray:
     """تحويل PyMuPDF Pixmap إلى numpy.ndarray BGR."""
     # PyMuPDF pixmap RGBA → تحويل إلى RGB ثم BGR
