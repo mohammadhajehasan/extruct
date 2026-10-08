@@ -1,0 +1,23 @@
+[build]
+  builder = "python"
+  buildCommand = "pip install -r requirements.txt"
+
+[deploy]
+  restartPolicy = "on-failure"
+  restartLimit = 3
+  startCommand = "python -m uvicorn main:app --host 0.0.0.0 --port $PORT"
+  healthCheckPath = "/api/health"
+  healthCheckTimeout = 20
+  healthCheckInterval = 10
+  healthCheckMethod = "GET"
+
+[[services]]
+  name = "extruct-py"
+  source = "mini-services/py-extractor"
+
+[[services]]
+  name = "extruct-redis"
+  source = "."  # Will be replaced by Redis plugin
+
+[env]
+  PORT = "8000"

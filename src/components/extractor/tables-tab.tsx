@@ -376,33 +376,26 @@ addFailure({
       return;
     }
 
-    // Group by sourceFile — each group extracted as one table
-    const groups = new Map<string, typeof pending>();
-    for (const item of pending) {
-      const key = item.sourceFile || item.id;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(item);
-    }
-
-    const groupArray = Array.from(groups.values());
-    setBatchTotal(groupArray.length);
+    // Process each image individually — sending 3+ base64 images in one request
+    // causes 502 on Render free tier. For multi-page PDFs, use the
+    // " جميع الصور = جدول واحد" checkbox to merge them into a single table.
+    setBatchTotal(pending.length);
     setBatchDone(0);
     setExtractStartedAt(Date.now());
 
-    for (const group of groupArray) {
+    for (const item of pending) {
       try {
-         const b64s = await Promise.all(group.map((item) => getExtractB64(item)));
-         const res = await smartExtract({ mode: "tables", imagesB64: b64s, concurrency: settings.concurrency, consensus: settings.consensusEnabled });
+        const b64 = await getExtractB64(item);
+        const res = await smartExtract({ mode: "tables", imagesB64: [b64], merge: false, concurrency: settings.concurrency, consensus: settings.consensusEnabled });
         const csv = cleanCsvText(res.text);
         if (!csv || csv.trim() === "-" || csv.trim() === "") continue;
         const grid = parseCsvSimple(csv);
-        const resultId = `tbl_group_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-        const groupName = group[0]?.sourceFile || group[0]?.name || "مجموعة";
+        const resultId = `tbl_${item.id}_${Date.now().toString(36)}`;
         addTableResult({
           id: resultId,
-          imageId: group[0]?.id || "",
-          imageName: group.length > 1 ? `${groupName} (${group.length} صفحات)` : groupName,
-          imageDataUrl: group[0]?.dataUrl,
+          imageId: item.id,
+          imageName: item.name,
+          imageDataUrl: item.dataUrl,
           csv,
           rows: grid.length,
           model: res.model,

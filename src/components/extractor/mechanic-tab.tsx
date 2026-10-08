@@ -238,10 +238,13 @@ const addReviewItem = useExtractorStore((s) => s.addReviewItem);
     let failures = 0;
     await mapPool(groups, settings.concurrency, async (g, gi) => {
       try {
-        // 15.10: مسار موحّد واعٍ للسلسلة — مباشر أو عبر failover حسب الإعدادات
+        const facesToProcess = g.faces.slice(0, 2);
+        if ((g.faces as string[]).length > 2) {
+          toast.warning(`${g.category_ar}: تم استهلاك 2 من ${g.faces.length} صورة فقط لتجنب 502 على Render free tier`);
+        }
         const res = await smartExtract({
           mode: "mechanic",
-          imagesB64: g.faces,
+          imagesB64: facesToProcess,
           concurrency: settings.concurrency,
           consensus: settings.consensusEnabled,
         });

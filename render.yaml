@@ -1,42 +1,21 @@
-databases:
-  - name: extruct_redis
-    plan: free
-    databaseName: extruct_system
-    ipAllowList: []
-    region: virginia
-    type: key_value
+# render.yaml - DEPRECATED (backend moved to Railway)
+# This file is kept for historical reference only.
+# The backend is now deployed on Railway via railway.toml.
 
-services:
-  - type: web
-    name: extruct-py
-    env: python
-    region: virginia
-    plan: free
-    rootDir: mini-services/py-extractor
-    buildCommand: pip install -r requirements.txt
-    startCommand: python -m uvicorn main:app --host 0.0.0.0 --port $PORT
-    envVars:
-      - key: PORT
-        generateValue: "8000"
-      - key: PY_BASE
-        value: https://extruct.onrender.com/api
-      - key: REDIS_URL
-        databaseName: extruct_redis
-
-  - type: web
-    name: extruct-web
-    env: node
-    region: virginia
-    plan: free
-    rootDir: extruct
-    buildCommand: npm ci && npm run build
-    startCommand: npm start
-    envVars:
-      - key: NEXT_PUBLIC_PY_BASE
-        value: https://extruct-i2z8.onrender.com/api
-      - key: NODE_VERSION
-        value: "22"
-      - key: PORT
-        value: "3000"
-      - key: REDIS_URL
-        databaseName: extruct_redis
+# For Render fallback (if needed):
+# services:
+#   - type: web
+#     name: extruct-py
+#     env: python
+#     region: virginia
+#     plan: free
+#     rootDir: mini-services/py-extractor
+#     buildCommand: pip install -r requirements.txt
+#     startCommand: python -m uvicorn main:app --host 0.0.0.0 --port $PORT
+#     envVars:
+#       - key: PORT
+#         generateValue: "8000"
+#       - key: PY_BASE
+#         value: https://extruct.up.railway.app/api  # Replace with Railway URL
+#       - key: REDIS_URL
+#         databaseName: extruct_redis
