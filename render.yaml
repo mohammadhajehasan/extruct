@@ -3,14 +3,14 @@ databases:
     plan: free
     databaseName: extruct_system
     ipAllowList: []
-    region: virginia
+    region: Frankfurt
     type: key_value
 
 services:
   - type: web
     name: extruct-py
     env: python
-    region: virginia
+    region: Frankfurt
     plan: free
     rootDir: mini-services/py-extractor
     buildCommand: pip install -r requirements.txt
@@ -26,7 +26,7 @@ services:
   - type: web
     name: extruct-web
     env: node
-    region: virginia
+    region: Frankfurt
     plan: free
     rootDir: extruct
     buildCommand: npm ci && npm run build

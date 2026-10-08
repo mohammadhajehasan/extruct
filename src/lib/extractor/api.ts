@@ -2,8 +2,8 @@
 // لكل الاستداءات عنوان مطلق لـ backend (PY_EXTRACTOR_URL / NEXT_PUBLIC_PY_BASE)
 // بدون بروكسي — يربط الخادم مباشرة:
 //   - محلياً: NEXT_PUBLIC_PY_BASE=http://127.0.0.1:8000/api (افتراضي إذا لم يُضبط)
-//   - Render:   PY_EXTRACTOR_URL=https://extruct.onrender.com/api
-//   - Netlify:  NEXT_PUBLIC_PY_BASE=https://extruct.onrender.com/api
+//   - Render: NEXT_PUBLIC_PY_BASE=https://extruct-py.onrender.com/api
+
 
 import type { FailoverLogEntry, ProviderStatus } from "./types";
 
@@ -442,3 +442,4 @@ export async function getGlossary(): Promise<{
 }> {
   return pyFetch("glossary");
 }
+
