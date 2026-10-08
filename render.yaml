@@ -32,8 +32,8 @@ services:
     buildCommand: npm ci && npm run build
     startCommand: npm start
     envVars:
-      - key: PY_EXTRACTOR_URL
-        value: https://extruct.onrender.com/api
+      - key: NEXT_PUBLIC_PY_BASE
+        value: https://extruct-py.onrender.com/api
       - key: NODE_VERSION
         value: "22"
       - key: PORT
