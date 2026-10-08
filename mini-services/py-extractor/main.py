@@ -37,7 +37,11 @@ app = FastAPI(title="المستخرج الأسطوري — py-extractor", versio
 # CORS مفتوح (الواجهة تصل عبر بوابة Caddy — عقد API §0)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://extruct-1.onrender.com",
+        "https://extruct.onrender.com",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
