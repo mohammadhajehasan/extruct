@@ -168,9 +168,10 @@ export async function getProfiles(): Promise<{
 
 export async function enhance(
   imageB64: string,
-  profile: string
-): Promise<{ image_b64: string; analysis: Record<string, unknown>; plan: { step: string; reason_ar: string }[]; profile_used: string; elapsed_ms: number }> {
-  return pyFetch("enhance", jsonInit("POST", { image_b64: imageB64, profile }));
+  profile: string,
+  targetDpi?: number
+): Promise<{ image_b64: string; analysis: Record<string, unknown>; plan: { step: string; reason_ar: string }[]; profile_used: string; elapsed_ms: number; upscale?: { from_dpi: number; to_dpi: number; factor: number } | null }> {
+  return pyFetch("enhance", jsonInit("POST", { image_b64: imageB64, profile, target_dpi: targetDpi ?? undefined }));
 }
 
 export async function parsePdf(file: File, dpi = 300): Promise<{

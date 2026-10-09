@@ -117,7 +117,7 @@ export interface ImageItem {
   previewUrl?: string; // مصغرة بعد تطبيق ops (للعرض فقط)
   label?: string; // تصنيف الميكانيك
   labelConfidence?: number;
-  sourceType?: "image" | "pdf_page"; // 15.8.3 مصدر العنصر
+  sourceType?: "image" | "pdf_page" | "upscaled"; // 15.8.3 مصدر العنصر (+ محسّنة من صفحة رفع الدقة)
   sourceFile?: string; // 15.8.3 اسم الملف الأصلي
   sourcePage?: number; // 15.8.3 رقم صفحة الـPDF (1-مبني)
 }
@@ -199,7 +199,7 @@ interface ExtractorStore {
     items: {
       name: string;
       dataUrl: string;
-      sourceType?: "image" | "pdf_page";
+      sourceType?: "image" | "pdf_page" | "upscaled";
       sourceFile?: string;
       sourcePage?: number;
     }[]

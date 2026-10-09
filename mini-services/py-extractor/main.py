@@ -131,6 +131,11 @@ class FailoverReq(BaseModel):
 class EnhanceReq(BaseModel):
     image_b64: str
     profile: str = "darken_clarity"
+    # دقة الإخراج المستهدفة لصفحة «رفع الدقة» (150/200/300/400) — اختياري.
+    # عند تحديده يُحسب معامل upscale للوصول للدقة المستهدفة من الدقة المقدَّرة
+    # للأصل (عرض البكسل ÷ 8.27 بوصة A4)، ثم تُطبَّق سلسلة البروفايل للتنقية.
+    # بلا target_dpi: السلوك القديم (سلسلة البروفايل كما هي).
+    target_dpi: Optional[int] = None
 
 
 class ExtractReq(BaseModel):
@@ -299,6 +304,28 @@ async def enhance(req: EnhanceReq):
     analysis = await asyncio.to_thread(analyzer.analyze, img)
     profile = req.profile if req.profile in planner.PROFILES else "darken_clarity"
 
+    # صفحة «رفع الدقة»: upscale محسوب للدقة المستهدفة قبل سلسلة التنقية.
+    # الدقة المقدَّرة للأصل = عرض البكسل ÷ عرض A4 (8.27") — المعامل = المستهدفة ÷ المقدَّرة
+    # (1.0-4.0، يُتجاهل إن ≤1.05 أي الأصل أعلى أصلاً). سقف الضلع 6000px حمايةً للذاكرة.
+    upscale_info: Optional[dict] = None
+    if req.target_dpi:
+        try:
+            import cv2 as _cv2
+            h0, w0 = img.shape[:2]
+            est_dpi = w0 / pdfio.A4_WIDTH_INCH
+            factor = float(req.target_dpi) / max(1.0, est_dpi)
+            if factor > 4.0:
+                factor = 4.0
+            if factor > 1.05 and max(h0, w0) * factor <= 6000:
+                new_size = (int(w0 * factor), int(h0 * factor))
+                img = await asyncio.to_thread(_cv2.resize, img, new_size,
+                                              None, 0, 0, _cv2.INTER_CUBIC)
+                upscale_info = {"from_dpi": round(est_dpi, 1), "to_dpi": int(req.target_dpi),
+                                "factor": round(factor, 2)}
+                analysis = await asyncio.to_thread(analyzer.analyze, img)
+        except Exception:
+            upscale_info = None
+
     def _run():
         if profile == "none":
             # العقد: profile=none يطبق stretch الختام فقط (بلا tuner)
@@ -315,12 +342,14 @@ async def enhance(req: EnhanceReq):
     audit.log("enhance", target=f"profile={res['profile_used']}",
               details={"elapsed_ms": elapsed, "tuned": res.get("tuned", False),
                        "tried": res.get("tried", []),
-                       "flags_before": analysis.get("flags")})
+                       "flags_before": analysis.get("flags"),
+                       "upscale": upscale_info})
     return ok(image_b64=out_b64, analysis=analysis,
               plan=res["plan"], profile_used=res["profile_used"],
               elapsed_ms=elapsed, tuned=res.get("tuned", False),
               tried=res.get("tried", []),
-              analysis_after=res.get("analysis_after"))
+              analysis_after=res.get("analysis_after"),
+              upscale=upscale_info)
 
 
 # ═══════════════ POST /api/pdf/parse ═══════════════

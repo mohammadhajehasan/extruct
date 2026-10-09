@@ -15,6 +15,7 @@ import {
   SearchCheck,
   Settings2,
   BarChart3,
+  ArrowUpFromLine,
   Wifi,
   WifiOff,
   AlertTriangle,
@@ -26,6 +27,7 @@ import { BenchmarkTab } from "@/components/extractor/benchmark-tab";
 import { ReviewTab } from "@/components/extractor/review-tab";
 import { SettingsTab } from "@/components/extractor/settings-tab";
 import { FailuresTab } from "@/components/extractor/failures-tab";
+import { UpscaleTab } from "@/components/extractor/upscale-tab";
 import { InfoTab } from "@/components/extractor/info-tab";
 import { ContactTab } from "@/components/extractor/contact-tab";
 import { useExtractorStore } from "@/lib/extractor/store";
@@ -169,6 +171,12 @@ export default function Home() {
               <CarFront className="h-4 w-4" aria-hidden /> 🚗 الميكانيك
             </TabsTrigger>
             <TabsTrigger
+              value="upscale"
+              className="min-h-11 gap-1.5 px-4 text-sm sm:text-base"
+            >
+              <ArrowUpFromLine className="h-4 w-4" aria-hidden /> 🚀 رفع الدقة
+            </TabsTrigger>
+            <TabsTrigger
               value="benchmark"
               className="min-h-11 gap-1.5 px-4 text-sm sm:text-base"
             >
@@ -222,6 +230,9 @@ export default function Home() {
           </TabsContent>
           <TabsContent value="mechanic" forceMount className="data-[state=inactive]:hidden">
             <MechanicTab />
+          </TabsContent>
+          <TabsContent value="upscale" forceMount className="data-[state=inactive]:hidden">
+            <UpscaleTab />
           </TabsContent>
           <TabsContent value="benchmark" forceMount className="data-[state=inactive]:hidden">
             <BenchmarkTab />

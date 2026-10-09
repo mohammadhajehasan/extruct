@@ -125,6 +125,14 @@ export function ImageQueue({
         <FileText className="h-2.5 w-2.5 me-0.5" />
         PDF ص{img.sourcePage ?? "؟"}
       </Badge>
+    ) : img.sourceType === "upscaled" ? (
+      <Badge
+        variant="outline"
+        className="text-[9px] px-1 py-0 border-primary/40 text-primary"
+        title={`محسّنة من صفحة رفع الدقة — المصدر: ${img.sourceFile ?? img.name}`}
+      >
+        🚀 محسّنة
+      </Badge>
     ) : (
       <Badge variant="outline" className="text-[9px] px-1 py-0" title={img.sourceFile ?? img.name}>
         صورة
