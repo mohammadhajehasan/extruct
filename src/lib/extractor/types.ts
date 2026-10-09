@@ -191,7 +191,8 @@ export type ProviderErrorType =
   | "rate_limited"
   | "network_down"
   | "unknown"
-  | "all_failed";
+  | "all_failed"
+  | "file_too_large";
 
 export interface ProviderStatus {
   available: boolean;

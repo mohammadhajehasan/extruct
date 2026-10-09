@@ -96,3 +96,19 @@ __pycache__/
 
 # Caddy
 Caddyfile
+
+# temp / probe scripts at repo root (analysis snapshots, not source)
+_a.py
+_c.py
+_d.py
+_patch.py
+_show.ps1
+_cmp.ps1
+_cmppdfio.ps1
+_p4.ps1
+_diff.txt
+env.txt
+env2.txt
+npmcfg.txt
+ports.txt
+*.pid

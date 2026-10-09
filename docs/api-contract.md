@@ -63,11 +63,13 @@ Body: `{ image_b64:string, profile:string }`
 → `{ ok:true, image_b64:string (المحسّنة), analysis:{...}, plan:[{step, reason_ar}], profile_used, elapsed_ms }`
 
 ### POST /api/pdf/parse
-multipart/form-data: `file` + `dpi` (افتراضي 300)
+multipart/form-data: `file` + `dpi` (افتراضي 300، يُقيَّد خادمياً 150-300)
 - PDF نصي (نص + جداول find_tables): صفحة `{kind:"native", index, tables:[[{cell}]] }` — بدقة 100% بلا نموذج.
-- PDF ممسوح: `{kind:"image", index, image_b64}` بكسل الخريطة dpi.
-- تحذير إن dpi<200 (`warning`).
+- PDF ممسوح: `{kind:"image", index, image_b64 (JPEG q88), mime:"image/jpeg"}` بكسل الخريطة dpi.
+- تحذير إن dpi<200 (`warning`)، وتحذير سقف الصفحات (`PDF_MAX_PAGES`، افتراضي 60 — أول N صفحة فقط).
+- سقف حجم الرفع (`PDF_MAX_UPLOAD_MB`، افتراضي 15): التجاوز ⇒ `{ok:false, error_type:"file_too_large", error_ar}` بدل OOM ⇒ 503.
 - ملف صورة غير PDF: صفحة واحدة kind=image.
+- حدود Render free: يُنصح `PDF_PARSE_WORKERS=1, PDF_MAX_PAGES=25` (صفحة A4@300dpi ≈ 26MB خام).
 → `{ ok:true, is_pdf:bool, pages:[...] }`
 
 ### POST /api/extract

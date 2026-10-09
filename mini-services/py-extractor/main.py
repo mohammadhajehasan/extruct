@@ -11,6 +11,7 @@ main.py — خدمة "المستخرج الأسطوري" v7.1 (FastAPI على ا
   + فحص توفر health/health_batch + سلسلة تراجع /api/extract/failover.
 """
 import asyncio
+import os
 import time
 from contextlib import asynccontextmanager
 from typing import List, Optional
@@ -35,19 +36,20 @@ MODULES = ["pdfio", "providers", "extractor", "enhancer", "analyzer",
 app = FastAPI(title="المستخرج الأسطوري — py-extractor", version=VERSION)
 
 # CORS للواجهة الأمامية على Render (frontend + backend على Render)
+# نطاقات مسموحة: محلي + نطاقات Render الإنتاجية.
+# يمكن إضافة نطاقات مخصّصة بلا تعديل الكود عبر متغيّر البيئة CORS_ORIGINS
+# (قائمة مفصولة بفواصل، مثال: "https://app.example.com,https://www.example.com").
+_DEFAULT_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "https://extruct-web.onrender.com",  # الواجهة على Render
+    "https://extruct.onrender.com",      # الباك نفسه (تشخيص من المتصفح)
+]
+_EXTRA_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-        # Render production domains
-        "https://extruct-1.onrender.com",
-        "https://extruct.onrender.com",
-        "https://extruct-web.onrender.com",
-        # Backend service on Render (self-reference)
-        "https://extruct-i2z8.onrender.com",
-        "https://extruct-py.onrender.com",
-    ],
+    allow_origins=_DEFAULT_ORIGINS + _EXTRA_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -329,21 +331,28 @@ async def pdf_parse(file: UploadFile = File(...), dpi: int = Form(300)):
     data = await file.read()
     if not data:
         return err("الملف فارغ")
+    # سقف حجم الرفع قبل فتح fitz: ملف ضخم ⇒ OOM مؤكد على 512MB.
+    # يُقرأ من البيئة (PDF_MAX_UPLOAD_MB، افتراضي 15) ويُرد 413 عربي بدل 503 صامت.
+    max_mb = float(os.environ.get("PDF_MAX_UPLOAD_MB", "15"))
+    if len(data) > max_mb * 1024 * 1024:
+        return {"ok": False, "error": f"الملف كبير ({len(data) / 1024 / 1024:.1f}MB يتجاوز {max_mb:g}MB) — قسّمه أو ارفعه بدقة أقل",
+                "error_type": "file_too_large", "error_ar": "الملف كبير — قسّمه لأجزاء أصغر أو اختر دقة أقل ثم أعد المحاولة"}
+    # تقييد الدقة على الخادم (150-300): حد أعلى يمنع تضخّم الذاكرة (OOM على 512MB).
+    dpi = max(150, min(int(dpi or 300), 300))
     try:
         parsed = await asyncio.to_thread(pdfio.parse_file, data,
                                          file.filename or "", dpi)
     except Exception as e:  # noqa: BLE001
         return err(f"فشل تحليل الملف: {e}")
+    del data  # حرّر بايتات الملف بعد التحليل — لا حاجة لها في الرد
 
-    pages = []
-    for p in parsed["pages"]:
+    # الصفحات تصل مُرمَّزة مسبقًا من pdfio (image_b64/mime) — لا مصفوفات صور
+    # تُحتجز هنا ولا تمريرة ترميز ثانية تُضاعف الذاكرة. نُزيل text من الصفحات
+    # النصية التزامًا بعقد /api/pdf/parse (tables فقط).
+    pages = parsed["pages"]
+    for p in pages:
         if p["kind"] == "native":
-            pages.append({"kind": "native", "index": p["index"],
-                          "tables": p["tables"]})
-        else:
-            b64 = await asyncio.to_thread(pdfio.encode_bgr_to_b64, p["img"])
-            pages.append({"kind": "image", "index": p["index"],
-                          "image_b64": b64})
+            p.pop("text", None)
     audit.log("pdf.parse", target=(file.filename or "")[:80],
               details={"is_pdf": parsed["is_pdf"], "pages": len(pages),
                        "dpi": dpi, "elapsed_ms": int((time.time() - t0) * 1000)})
@@ -351,93 +360,6 @@ async def pdf_parse(file: UploadFile = File(...), dpi: int = Form(300)):
     if parsed.get("warning"):
         out["warning"] = parsed["warning"]
     return out
-
-
-# ═══════════════ POST /api/extract ═══════════════
-
-def _do_extract(req: ExtractReq) -> dict:
-    """مزامنة داخل thread — كل مسارات mode الأربعة.
-    يتحكم في: Timeout (ms), Parallelism (concurrency via asyncio.Semaphore),
-    والإجماع (consensus) — دمج نتائج مصدرين بالبروتوكول (consensus_fields)."""
-    mode = req.mode
-    images = [b for b in (req.images_b64 or []) if (b or "").strip()]
-    if not images:
-        raise ValueError("images_b64 مطلوبة")
-    extra = req.extra or {}
-    timeout = float(extra.get("timeout", 120))
-    concurrency = min(max(1, int(extra.get("concurrency", 3))), 6)
-    consensus_enabled = bool(extra.get("consensus", False))
-    model = req.model or ""
-
-    if mode == "tables":
-        # دمج: جميع الصور المرفقة هي محتويات الجدول نفسه (ليست جدولًا منفصلًا لكل صورة)
-        if req.merge:
-            prompt = extractor.TABLES_MERGE_PROMPT
-            imgs = images
-        else:
-            prompt = extractor.TABLES_PROMPT
-            imgs = images[:1]
-        text, attempts = extractor.call_vl(
-            imgs, req.provider, model, req.base_url, req.api_key,
-            prompt, timeout)
-        rows = extractor.parse_csv_tolerant(text)
-        return {"text": text, "attempts": attempts, "parsed": rows,
-                "model": model, "audit_details": {"rows": len(rows)}}
-
-    if mode == "mechanic":
-        # 8.6 — few-shot من KB (حقن بالبرومبت فقط — لا تعديل على القيم المستخرجة)
-        fewshots: List[dict] = []
-        for fk in glossary.MECHANIC_KEYS:
-            fewshots.extend(kb.fewshot(fk, limit=1))
-        fewshots.sort(key=lambda s: int(s.get("count", 1)), reverse=True)
-        prompt = extractor.build_mechanic_prompt(fewshots[:5])
-        # مسار موحد لكل المزودات (بما فيها Z.ai — مزود عادي): كل الصور في رسالة واحدة
-        # عبر openai-compatible، ودمج/كشف تعارض الوجهين في Python عند الحاجة.
-        text, attempts = extractor.call_vl(
-            images, req.provider, model, req.base_url, req.api_key,
-            prompt, timeout)
-        obj = extractor.parse_json_tolerant(text)
-        fields = extractor.normalize_fields(
-            obj if isinstance(obj, dict) else {})
-        raw_conf = obj.get("conflicts") if isinstance(obj, dict) else None
-        conflicts = [str(c) for c in raw_conf] if isinstance(raw_conf, list) else []
-        face_values = [{"face_index": 0, "fields": fields}]
-        audit_extra = {"faces": len(images), "conflicts": conflicts}
-        parsed = {"fields": fields, "conflicts": conflicts,
-                  "face_values": face_values}
-        return {"text": text, "attempts": attempts, "parsed": parsed,
-                "model": model, "audit_details": audit_extra}
-
-    if mode == "classify":
-        prompt = extractor.CLASSIFY_PROMPT
-        text, attempts = extractor.call_vl(
-            images[:1], req.provider, model, req.base_url, req.api_key,
-            prompt, timeout)
-        obj = extractor.parse_json_tolerant(text)
-        parsed = None
-        if isinstance(obj, dict) and obj.get("label"):
-            parsed = {"label": str(obj["label"]),
-                      "confidence": obj.get("confidence", 0)}
-            if parsed["label"] not in glossary.CLASSIFY_LABELS:
-                parsed["label"] = "unknown"
-        return {"text": text, "attempts": attempts, "parsed": parsed,
-                "model": model, "audit_details":
-                    {"label": (parsed or {}).get("label")}}
-
-    if mode == "verify":
-        prompt = verifier.build_verify_prompt(
-            extra.get("current_fields"), extra.get("current_text"))
-        text, attempts = extractor.call_vl(
-            images[:1], req.provider, model, req.base_url, req.api_key,
-            prompt, timeout)
-        parsed = verifier.parse_verify_response(text)
-        return {"text": text, "attempts": attempts, "parsed": parsed,
-                "model": model,
-                "audit_details": {"corrections":
-                    len((parsed or {}).get("corrections", {}))}}
-
-    raise ValueError(f"mode غير معروف: {mode} "
-                     "(المسموح: tables | mechanic | classify | verify)")
 
 
 @app.post("/api/extract")

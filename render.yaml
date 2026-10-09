@@ -1,42 +1,45 @@
-databases:
-  - name: extruct_redis
-    plan: free
-    databaseName: extruct_system
-    ipAllowList: []
-    region: Frankfurt
-    type: key_value
+# Render Blueprint — المستخرج الأسطوري v7.1
+# الباك (FastAPI)   : mini-services/py-extractor → https://extruct.onrender.com
+# الواجهة (Next.js) : جذر المستودع               → https://extruct-web.onrender.com
+#
+# قواعد ملزمة:
+# - لا تُعلَن خدمة Redis: الكود لا يستخدم REDIS_URL إطلاقًا (تحقّق بالبحث في كل ملفات TS/Python).
+# - لا يُعلَن PORT: Render يحقن PORT تلقائيًا، وكل خدمة تربط عليه عبر $PORT.
+# - NEXT_PUBLIC_PY_BASE يُحقن في الواجهة وقت البناء → أي تغيير له يستلزم إعادة بناء (Redeploy)
+#   لا مجرّد إعادة تشغيل. العنوان أدناه يجب أن يطابق subdomain خدمة الباك فعليًا.
 
 services:
   - type: web
-    name: extruct-py
+    name: extruct
     env: python
     region: Frankfurt
     plan: free
     rootDir: mini-services/py-extractor
     buildCommand: pip install -r requirements.txt
     startCommand: python -m uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
     envVars:
-      - key: PORT
-        generateValue: "8000"
       - key: PY_BASE
-        value: https://extruct-py.onrender.com/api
-      - key: REDIS_URL
-        databaseName: extruct_redis
+        value: https://extruct.onrender.com/api
+      # تقسية الذاكرة على خطة free (512MB) — ملف 50 صفحة ممسوحة ≈ 1.3GB خام ⇒ OOM ⇒ 503.
+      # عامل واحد (تسلسلي: PyMuPDF غير مضمون الخيوط) + سقف 25 صفحة + سقف رفع 15MB.
+      - key: PDF_PARSE_WORKERS
+        value: "1"
+      - key: PDF_MAX_PAGES
+        value: "25"
+      - key: PDF_MAX_UPLOAD_MB
+        value: "15"
 
   - type: web
     name: extruct-web
     env: node
     region: Frankfurt
     plan: free
-    rootDir: extruct
+    rootDir: .
     buildCommand: bun install && bun run build
     startCommand: bun start
     envVars:
       - key: NEXT_PUBLIC_PY_BASE
-        value: https://extruct-py.onrender.com/api
+        value: https://extruct.onrender.com/api
       - key: NODE_VERSION
         value: "22"
-      - key: PORT
-        value: "3000"
-      - key: REDIS_URL
-        databaseName: extruct_redis

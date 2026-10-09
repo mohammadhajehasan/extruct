@@ -15,9 +15,8 @@
   name = "extruct-py"
   source = "mini-services/py-extractor"
 
-[[services]]
-  name = "extruct-redis"
-  source = "."  # Will be replaced by Redis plugin
+# ملاحظة ملزمة: لا خدمة Redis — الكود لا يستخدم REDIS_URL إطلاقاً
+# (أُزيل مقطع extruct-redis المهجور الذي كان يتعارض مع render.yaml وREADME).
 
 [env]
   PORT = "8000"

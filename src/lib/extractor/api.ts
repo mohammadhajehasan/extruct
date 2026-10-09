@@ -2,7 +2,7 @@
 // لكل الاستداءات عنوان مطلق لـ backend (PY_EXTRACTOR_URL / NEXT_PUBLIC_PY_BASE)
 // بدون بروكسي — يربط الخادم مباشرة:
 //   - محلياً: NEXT_PUBLIC_PY_BASE=http://127.0.0.1:8000/api (افتراضي إذا لم يُضبط)
-//   - Render: NEXT_PUBLIC_PY_BASE=https://extruct-py.onrender.com/api
+//   - Render: NEXT_PUBLIC_PY_BASE=https://extruct.onrender.com/api
 
 
 import type { FailoverLogEntry, ProviderStatus } from "./types";
@@ -41,7 +41,13 @@ export class PyApiError extends Error {
 
 async function pyFetch<T = Json>(path: string, options: RequestInit = {}): Promise<T> {
   const url = `${PY}/${path}`;
-  const res = await fetch(url, options);
+  let res: Response;
+  try {
+    res = await fetch(url, options);
+  } catch {
+    // الشبكة نفسها ساقطة (الخادم لا يرد إطلاقاً — DNS/إقلاع/انقطاع)
+    throw new Error("تعذر الوصول إلى خدمة الاستخراج — تحقق من الشبكة أو أن الخدمة تعمل");
+  }
   let json: Json | null = null;
   try {
     json = (await res.json()) as Json;
@@ -49,6 +55,24 @@ async function pyFetch<T = Json>(path: string, options: RequestInit = {}): Promi
     // استجابة ليست JSON
   }
   if (!res.ok || !json || json.ok === false) {
+    // ملف مرفوض حجمه قبل المعالجة — رسالة التقسيم كما هي
+    if (json && json.ok === false && json.error_type === "file_too_large") {
+      throw new PyApiError(
+        (typeof json.error === "string" && json.error) || "الملف كبير",
+        {
+          errorType: "file_too_large",
+          errorAr: typeof json.error_ar === "string" ? json.error_ar : undefined,
+          payload: json,
+        }
+      );
+    }
+    // 502/503/504: البوابة/الحاوية نفسها سقطت (غالباً OOM وإعادة إقلاع على خطة free)
+    // — لا تصل هنا error_type لأن القتل يحدث قبل CORS/Middleware، فنميزها بالحالة.
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      throw new Error(
+        `خدمة الاستخراج أعادت الإقلاع (${res.status}) — غالباً ملف كبير أثقل الذاكرة. قلل عدد الصفحات أو الدقة ثم أعد المحاولة`
+      );
+    }
     const msg =
       (json && typeof json.error === "string" && json.error) ||
       `فشل الاتصال بخدمة الاستخراج (${res.status})`;

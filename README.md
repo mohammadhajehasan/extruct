@@ -58,6 +58,26 @@ npm run dev
 
 > ⚠️ لا تُخزَّن المفاتيح على الخادم — تُحفظ في متصفحك فقط (localStorage).
 
+## النشر على Render / Deploy
+
+خدمتان (انظر `render.yaml`):
+- `extruct` (FastAPI) → `https://extruct.onrender.com`
+- `extruct-web` (Next.js) → `https://extruct-web.onrender.com`
+
+نقاط حرجة (سبب أعطال النشر السابقة):
+1. **`NEXT_PUBLIC_PY_BASE`** يجب أن يساوي عنوان الباك الفعلي `https://extruct.onrender.com/api`.
+   لأنه يُحقن في حزمة المتصفح **وقت البناء**، فأي تغيير له يستلزم **إعادة بناء** (Manual Deploy)
+   لا إعادة تشغيل. إن كان العنوان خاطئًا تظهر «فشل الاتصال بخدمة الاستخراج (404)» رغم أن الباك سليم.
+2. لا تُضبط `PORT` يدويًا: Render يحقنها تلقائيًا وكل خدمة تربط عبر `$PORT`.
+3. لا حاجة لخدمة Redis: الكود لا يستخدم `REDIS_URL` إطلاقًا.
+4. على Render تكون `capabilities: {barcode:false, ocr:false}` (لا tesseract/libzbar)، لذا ترجع نقطة
+   `mechanic/ocr_cross` رسالة «tesseract غير متوفر» ويتحول تجميع الباركود لطريقة التجاور.
+
+### تشخيص سريع
+- الواجهة تعمل؟ افتح `https://extruct-web.onrender.com/`
+- الباك يعمل؟ افتح `https://extruct.onrender.com/api/health` (يجب أن يعيد `"ok":true` والـ17 وحدة)
+- ما العنوان المضمَّن فعلًا في الواجهة؟ ابحث في حزم `/_next/static/chunks/*.js` عن `onrender.com`
+
 ## البنية / Structure
 
 ```

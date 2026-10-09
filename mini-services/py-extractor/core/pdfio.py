@@ -9,6 +9,7 @@ import io
 import os
 
 from concurrent.futures import ThreadPoolExecutor
+from typing import Optional
 
 import cv2
 import fitz  # PyMuPDF
@@ -19,16 +20,19 @@ DETECT_DPI = int(os.environ.get("PDF_DETECT_DPI", "150"))
 # A4: 8.27 × 11.69 بوصة — تُستخدم لتقدير dpi من عرض الصورة
 A4_WIDTH_INCH = 8.27
 
-# عدد العمال المتوازية — يقرأ من البيئة مع افتراضي 4
-_PARALLEL_WORKERS = int(os.environ.get("PDF_PARSE_WORKERS", "4"))
+# عدد العمال المتوازية. كل عامل يُنتج صورة صفحة كاملة في الذاكرة، لذا الافتراضي 2:
+# على Render free (512MB) الأربعة يضاعفون ذروة الذاكرة ويسبّبون OOM → 503.
+# PDF_PARSE_WORKERS=1 هو الأكثر أمانًا (PyMuPDF غير مضمون مع الوصول المتزامن).
+_PARALLEL_WORKERS = max(1, int(os.environ.get("PDF_PARSE_WORKERS", "2")))
 
-# مفتاح عالمي لمنع تكرار معالجة الصفحات في الذاكرة
-_PAGE_CACHE = {}
+# سقف عدد الصفحات المُصيَّرة في الطلب الواحد (حماية من نفاد الذاكرة). 0 = بلا سقف.
+MAX_PAGES = max(0, int(os.environ.get("PDF_MAX_PAGES", "60")))
 
+# جودة JPEG لصفحات المسح — PNG يضخّم الحمولة والذاكرة ~10 مرات.
+JPEG_QUALITY = int(os.environ.get("PDF_JPEG_QUALITY", "88"))
 
-def _cache_key(data: bytes, detect_dpi: int, render_dpi: int) -> str:
-    """مفتاح فريد للتخزين المؤقت."""
-    return f"{len(data)}:{detect_dpi}:{render_dpi}:{hash(data)}"
+# ملاحظة: أُزيل تخزين _PAGE_CACHE المؤقت — كان dict عالميًا غير محدود يحتفظ بمصفوفات
+# كل صفحات كل ملف PDF مرفوع مدى حياة العملية (تسريب ذاكرة مؤكد → OOM/503).
 
 
 def _parse_single_page(args: tuple) -> dict:
@@ -56,9 +60,11 @@ def _parse_single_page(args: tuple) -> dict:
             except Exception:
                 continue
         return {"index": i, "kind": "native", "tables": native,
-                "text": text, "img": None, "needs_render": False}
+                "text": text, "image_b64": None, "needs_render": False}
     else:
-        # صفحة مسح — render بدقة render_dpi فقط
+        # صفحة مسح — render بدقة render_dpi ثم ترميز JPEG **داخل العامل نفسه**
+        # حتى تُحرَّر مصفوفة الصورة فور انتهائه ولا تتراكم صفحات كاملة في الذاكرة.
+        # del pix صريح: عينة الـpixmap خام (≈26MB لـA4@300dpi) يجب تحريرها مع img.
         zoom = max(render_dpi, 72) / 72.0
         try:
             pix = pg.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
@@ -66,24 +72,31 @@ def _parse_single_page(args: tuple) -> dict:
         except Exception:
             pix = pg.get_pixmap(alpha=False)
             img = _pix_to_bgr(pix)
+        b64 = encode_bgr_to_b64_jpeg(img)
+        del img, pix
         return {"index": i, "kind": "image", "tables": [],
-                "text": text, "img": img, "needs_render": True}
+                "text": text, "image_b64": b64, "mime": "image/jpeg",
+                "needs_render": True}
 
 
-def pdf_pages_from_bytes(data: bytes, dpi: int = DEFAULT_DPI) -> list:
+def pdf_pages_from_bytes(data: bytes, dpi: int = DEFAULT_DPI) -> tuple:
     """
     لكل صفحة PDF:
       - كشف مبدئي بـ DETECT_DPI (150 افتراضياً) لتحديد ما إذا كانت الصفحة
         نصية (جداول native) أم مسح — الكشف رخيص ولا يحتاج rendering.
-      - الصفحات الممسوحة فقط تُrender بدقة dpi كاملة.
+      - الصفحات الممسوحة فقط تُrender بدقة dpi كاملة وتُرمَّز JPEG فوراً.
+    يعيد: (pages, warning). الصفحات الممسوحة تحمل image_b64 + mime مباشرة
+    (لا مصفوفات BGR محتجزة)، فلا تتراكم صور كاملة في الذاكرة ولا تُسرَّب بين الطلبات.
     """
-    key = _cache_key(data, DETECT_DPI, dpi)
-    if key in _PAGE_CACHE:
-        return _PAGE_CACHE[key]
+    warning: Optional[str] = None
     out = []
     with fitz.open(stream=data, filetype="pdf") as doc:
-        pages = list(doc)
-        args = [(i, pg, DETECT_DPI, dpi) for i, pg in enumerate(pages)]
+        total = doc.page_count
+        limit = total if MAX_PAGES <= 0 else min(total, MAX_PAGES)
+        if limit < total:
+            warning = (f"الملف يحتوي {total} صفحة — عُولجت أول {limit} صفحة فقط "
+                       f"لحماية الخدمة من نفاد الذاكرة (يمكن رفع الحد عبر PDF_MAX_PAGES).")
+        args = [(i, doc.load_page(i), DETECT_DPI, dpi) for i in range(limit)]
         results = []
         with ThreadPoolExecutor(max_workers=_PARALLEL_WORKERS) as ex:
             for r in ex.map(_parse_single_page, args):
@@ -93,12 +106,12 @@ def pdf_pages_from_bytes(data: bytes, dpi: int = DEFAULT_DPI) -> list:
         for r in results:
             if r["needs_render"]:
                 out.append({"kind": "image", "index": r["index"],
-                            "img": r["img"]})
+                            "image_b64": r["image_b64"],
+                            "mime": r.get("mime", "image/jpeg")})
             else:
                 out.append({"kind": "native", "index": r["index"],
                             "tables": r["tables"], "text": r.get("text", "")})
-    _PAGE_CACHE[key] = out
-    return out
+    return out, warning
 
 
 def decode_b64_to_bgr(image_b64: str) -> np.ndarray:
@@ -123,8 +136,16 @@ def decode_b64_to_bgr(image_b64: str) -> np.ndarray:
 
 
 def encode_bgr_to_b64(img: np.ndarray) -> str:
-    """تحويل مصفوفة BGR مفتوحة إلى base64."""
+    """تحويل مصفوفة BGR مفتوحة إلى base64 (PNG بلا فقد)."""
     _, buf = cv2.imencode(".png", img)
+    return base64.b64encode(buf.tobytes()).decode()
+
+
+def encode_bgr_to_b64_jpeg(img: np.ndarray, quality: int = JPEG_QUALITY) -> str:
+    """base64 لصورة JPEG — أصغر من PNG بنحو 10 مرات لصفحات المسح."""
+    ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)])
+    if not ok:  # احتياط نادر
+        _, buf = cv2.imencode(".png", img)
     return base64.b64encode(buf.tobytes()).decode()
 
 
@@ -155,22 +176,25 @@ def image_page_from_bytes(data: bytes) -> dict:
         from PIL import Image
         pil = Image.open(io.BytesIO(data)).convert("RGB")
         img = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
-    return {"kind": "image", "index": 0, "img": img}
+    b64 = encode_bgr_to_b64_jpeg(img)
+    return {"kind": "image", "index": 0, "image_b64": b64, "mime": "image/jpeg"}
 
 
 def parse_file(data: bytes, filename: str = "", dpi: int = DEFAULT_DPI) -> dict:
     """
     نقطة الدخول الموحدة لـ /api/pdf/parse.
-    يعيد: {is_pdf, pages:[{kind, index, tables?|img?}], warning?}
-    (img تُستبدل لاحقاً بـ image_b64 في main.py)
+    يعيد: {is_pdf, pages:[{kind, index, tables?|image_b64?, mime?}], warning?}
+    (الصفحات الممسوحة تأتي مُرمَّزة JPEG مسبقًا — لا مصفوفات صور محتجزة)
     """
     warning: Optional[str] = None
-    if dpi < 200:
-        warning = f"dpi={dpi} أقل من 200 — جودة الصفحات الممسوحة قد تكون ضعيفة (يُنصح بـ 300)"
     name = (filename or "").lower()
     is_pdf = data[:5] == b"%PDF-" or name.endswith(".pdf")
     if is_pdf:
-        pages = pdf_pages_from_bytes(data, dpi=dpi)
+        pages, cap_warning = pdf_pages_from_bytes(data, dpi=dpi)
+        warning = cap_warning
     else:
         pages = [image_page_from_bytes(data)]
+    if dpi < 200:
+        dpi_warning = f"dpi={dpi} أقل من 200 — جودة الصفحات الممسوحة قد تكون ضعيفة (يُنصح بـ 300)"
+        warning = f"{warning} {dpi_warning}" if warning else dpi_warning
     return {"is_pdf": is_pdf, "pages": pages, "warning": warning}
