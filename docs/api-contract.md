@@ -63,17 +63,21 @@ Body: `{ image_b64:string, profile:string }`
 → `{ ok:true, image_b64:string (المحسّنة), analysis:{...}, plan:[{step, reason_ar}], profile_used, elapsed_ms }`
 
 ### POST /api/pdf/parse
-multipart/form-data: `file` + `dpi` (افتراضي 300، يُقيَّد خادمياً 150-300 — للتحذيرات فقط)
-- دقة render الصفحات الممسوحة ثابتة عبر `PDF_RENDER_DPI` (افتراضي 200، سقف 300):
-  200 بدل 300 ⇒ ~2.25x بكسلات أقل (render+ترميز+base64 أسرع) والدقة كافية للاستخراج.
-- PDF نصي (نص + جداول find_tables): صفحة `{kind:"native", index, tables:[[{cell}]] }` — بدقة 100% بلا نموذج.
+multipart/form-data: `file` + `dpi` (دقة render صفحات المسح — يختارها المستخدم: 150/200/300)
+- الملف يُرفع بدقته الأصلية دائماً؛ `dpi` تتحكم بدقة render صفحات المسح فقط (النصية لا تتأثر).
+- المستويات: 150 سريعة (~2x أسرع من 300) / 200 متوازنة (الافتراضية) / 300 عالية الدقة للنص الصغير.
+- سقف الأمان `PDF_RENDER_MAX` (افتراضي 300): التجاوز يُثبَّت ويُعلَّن في `warning` — لا قصّ صامت.
+- تقدير ذاكرة مسبق (الدقة × الصفحات): التجاوز ⇒ `{ok:false, error_type:"file_too_large", error_ar}`
+  قبل أي render — اختر دقة أقل من الإعدادات ثم أعد الرفع.
 - مسار سريع: صفحة بلا نص = مسح يقيناً — تُrender مباشرة بلا get_drawings/find_tables.
-- PDF ممسوح: `{kind:"image", index, image_b64 (JPEG q88), mime:"image/jpeg"}` بكسل الخريطة.
-- تحذير إن dpi<200 (`warning`)، وتحذير سقف الصفحات (`PDF_MAX_PAGES`، افتراضي 60 — أول N صفحة فقط).
-- سقف حجم الرفع (`PDF_MAX_UPLOAD_MB`، افتراضي 15): التجاوز ⇒ `{ok:false, error_type:"file_too_large", error_ar}` بدل OOM ⇒ 503.
+- PDF نصي (نص + جداول find_tables): صفحة `{kind:"native", index, tables:[[{cell}]] }` — بدقة 100% بلا نموذج.
+- PDF ممسوح: `{kind:"image", index, image_b64 (JPEG q88), mime:"image/jpeg"}` بالدقة المختارة.
+- تحذير دقة منخفضة إن render_dpi<200، وتحذير سقف الصفحات (`PDF_MAX_PAGES`، افتراضي 60).
+- سقف حجم الرفع (`PDF_MAX_UPLOAD_MB`، افتراضي 15): التجاوز ⇒ `file_too_large` بدل OOM ⇒ 503.
 - ملف صورة غير PDF: صفحة واحدة kind=image.
-- حدود Render free: يُنصح `PDF_PARSE_WORKERS=2, PDF_MAX_PAGES=25, PDF_RENDER_DPI=200` (صفحة A4@300dpi ≈ 26MB خام).
-→ `{ ok:true, is_pdf:bool, pages:[...] }`
+- الرد يتضمن `render_dpi` الفعلية المستخدمة.
+- حدود Render free: يُنصح `PDF_PARSE_WORKERS=2, PDF_MAX_PAGES=25` (صفحة A4@300dpi ≈ 26MB خام).
+→ `{ ok:true, is_pdf:bool, pages:[...], render_dpi:int }`
 
 ### POST /api/extract
 Body: `{ mode:"tables"|"mechanic"|"classify"|"verify",

@@ -26,12 +26,17 @@ A4_WIDTH_INCH = 8.27
 # - 1 تسلسلي (الأكثر أماناً، PyMuPDF غير مضمون الخيوط) — اضبط PDF_PARSE_WORKERS=1 عند OOM.
 _PARALLEL_WORKERS = max(1, int(os.environ.get("PDF_PARSE_WORKERS", "2")))
 
-# دقة render الصفحات الممسوحة — منفصلة عن dpi الطلب (الذي يُستخدم للتحذيرات فقط).
-# خفض 300→200 يقلّص البكسلات ~2.25x (وقت render+ترميز+حجم base64 معاً) مع بقاء
-# الدقة كافية للاستخراج (الواجهة تسوّي لـ2048px قبل النموذج على أي حال).
-# يُتجاوز عبر PDF_RENDER_DPI، ودpi الطلب يُثبَّت عليه إن لم يُضبط المتغير.
+# دقة render الصفحات الممسوحة — يختارها المستخدم من الواجهة (dpi الطلب).
+# الباك يحترم اختيار المستخدم فعلياً ضمن سقف الأمان PDF_RENDER_MAX (افتراضي 300).
+# تقدير الذاكرة المسبق (سطر ~150) يرفض الطلب برسالة عربية قبل OOM إن تجاوزت
+# الدقة المختارة × عدد الصفحات سعة الحاوية — لا قصّ صامت لاختيار المستخدم.
 RENDER_DPI_DEFAULT = int(os.environ.get("PDF_RENDER_DPI", "200"))
-RENDER_DPI_MAX = 300
+RENDER_DPI_MAX = max(150, int(os.environ.get("PDF_RENDER_MAX", "300")))
+# ذروة خام مسموحة لطلب واحد (بايت): صفحات × عرض × طول × 3 قنوات.
+# A4@300dpi ≈ 26MB/صفحة — السقف 400MB يترك هامشاً على حاوية 512MB.
+MAX_RENDER_BYTES = int(float(os.environ.get("PDF_MAX_RENDER_MB", "400")) * 1024 * 1024)
+# أبعاد A4 بالبوصة — لتقدير البكسلات قبل الـrender (العرض 8.27 × الطول 11.69).
+A4_HEIGHT_INCH = 11.69
 
 # سقف عدد الصفحات المُصيَّرة في الطلب الواحد (حماية من نفاد الذاكرة). 0 = بلا سقف.
 MAX_PAGES = max(0, int(os.environ.get("PDF_MAX_PAGES", "60")))
@@ -93,27 +98,59 @@ def _render_scan_page(i: int, pg, render_dpi: int, text: str = "") -> dict:
             "needs_render": True}
 
 
+def estimate_render_bytes(page_count: int, render_dpi: int) -> int:
+    """تقدير ذروة الذاكرة الخام لطلب واحد قبل أي render (بايت).
+    A4: عرض × طول × 3 قنوات × عدد الصفحات — تقدير متحفظ (صفحة حقيقية ≤ A4 غالباً)."""
+    w = int(A4_WIDTH_INCH * render_dpi)
+    h = int(A4_HEIGHT_INCH * render_dpi)
+    return page_count * w * h * 3
+
+
+def resolve_render_dpi(requested_dpi: int) -> tuple:
+    """دقة المستخدم ضمن سقف الأمان: (render_dpi, capped).
+    capped=True تعني طُلب أعلى من السقف فثُبّت — تُذكر في warning (لا قصّ صامت)."""
+    try:
+        req = int(requested_dpi or RENDER_DPI_DEFAULT)
+    except (TypeError, ValueError):
+        req = RENDER_DPI_DEFAULT
+    if req > RENDER_DPI_MAX:
+        return RENDER_DPI_MAX, True
+    return max(72, req), False
+
+
 def pdf_pages_from_bytes(data: bytes, dpi: int = DEFAULT_DPI) -> tuple:
     """
     لكل صفحة PDF:
-      - كشف مبدئي بـ DETECT_DPI (150 افتراضياً) لتحديد ما إذا كانت الصفحة
-        نصية (جداول native) أم مسح — الكشف رخيص ولا يحتاج rendering.
-      - الصفحات الممسوحة فقط تُrender بدقة RENDER (افتراضي 200، سقف 300)
-        وتُرمَّز JPEG فوراً. دقة الطلب dpi تُستخدم للتحذيرات فقط.
-    يعيد: (pages, warning). الصفحات الممسوحة تحمل image_b64 + mime مباشرة
-    (لا مصفوفات BGR محتجزة)، فلا تتراكم صور كاملة في الذاكرة ولا تُسرَّب بين الطلبات.
+      - دقة المستخدم (dpi) تُستخدم فعلياً للـrender ضمن سقف RENDER_MAX —
+        لا تجاهل صامت: التجاوز يُثبَّت ويُذكر في warning.
+      - تقدير ذاكرة مسبق: الدقة × الصفحات > السقف ⇒ ValueError برسالة عربية
+        (يحوّلها main.py لـ file_too_large) قبل أي render — لا OOM.
+      - كشف مبدئي رخيص (نص/رسومات) لتحديد النصية (جداول native) أم مسح.
+      - الصفحات الممسوحة فقط تُrender وتُرمَّز JPEG فوراً داخل العامل.
+    يعيد: (pages, warning, render_dpi). الصفحات الممسوحة تحمل image_b64 + mime
+    (لا مصفوفات BGR محتجزة).
     """
     warning: Optional[str] = None
     out = []
-    # دقة الـrender الفعلية: PDF_RENDER_DPI (افتراضي 200) يثبّت الدقة بغض النظر عن dpi
-    # الطلب — الأخير يُستخدم للتحذيرات فقط. السقف 300 دائماً.
-    render_dpi = min(max(RENDER_DPI_DEFAULT, 72), RENDER_DPI_MAX)
+    # دقة المستخدم الفعلية ضمن سقف الأمان — القصّ يُعلَّن في warning.
+    render_dpi, capped = resolve_render_dpi(dpi)
+    if capped:
+        warning = (f"طُلبت دقة {dpi} فثُبّتت على سقف الأمان {RENDER_DPI_MAX} "
+                   f"لحماية الخدمة من نفاد الذاكرة.")
     with fitz.open(stream=data, filetype="pdf") as doc:
         total = doc.page_count
         limit = total if MAX_PAGES <= 0 else min(total, MAX_PAGES)
         if limit < total:
-            warning = (f"الملف يحتوي {total} صفحة — عُولجت أول {limit} صفحة فقط "
+            cap_msg = (f"الملف يحتوي {total} صفحة — عُولجت أول {limit} صفحة فقط "
                        f"لحماية الخدمة من نفاد الذاكرة (يمكن رفع الحد عبر PDF_MAX_PAGES).")
+            warning = f"{warning} {cap_msg}" if warning else cap_msg
+        # تقدير مسبق قبل أي render: الدقة المختارة × الصفحات مقابل السقف.
+        est = estimate_render_bytes(limit, render_dpi)
+        if est > MAX_RENDER_BYTES:
+            raise MemoryError(
+                f"الدقة {render_dpi} مع {limit} صفحة تحتاج ~{est / 1024 / 1024:.0f}MB "
+                f"تتجاوز سقف {MAX_RENDER_BYTES / 1024 / 1024:.0f}MB — "
+                f"اختر دقة أقل (150) أو قسّم الملف")
         args = [(i, doc.load_page(i), DETECT_DPI, render_dpi) for i in range(limit)]
         results = []
         with ThreadPoolExecutor(max_workers=_PARALLEL_WORKERS) as ex:
@@ -129,7 +166,7 @@ def pdf_pages_from_bytes(data: bytes, dpi: int = DEFAULT_DPI) -> tuple:
             else:
                 out.append({"kind": "native", "index": r["index"],
                             "tables": r["tables"], "text": r.get("text", "")})
-    return out, warning
+    return out, warning, render_dpi
 
 
 def decode_b64_to_bgr(image_b64: str) -> np.ndarray:
@@ -201,18 +238,23 @@ def image_page_from_bytes(data: bytes) -> dict:
 def parse_file(data: bytes, filename: str = "", dpi: int = DEFAULT_DPI) -> dict:
     """
     نقطة الدخول الموحدة لـ /api/pdf/parse.
-    يعيد: {is_pdf, pages:[{kind, index, tables?|image_b64?, mime?}], warning?}
-    (الصفحات الممسوحة تأتي مُرمَّزة JPEG مسبقًا — لا مصفوفات صور محتجزة)
+    يعيد: {is_pdf, pages:[{kind, index, tables?|image_b64?, mime?}], warning?, render_dpi?}
+    (الصفحات الممسوحة تأتي مُرمَّزة JPEG بالدقة التي اختارها المستخدم — لا مصفوفات محتجزة)
     """
     warning: Optional[str] = None
+    render_dpi: Optional[int] = None
     name = (filename or "").lower()
     is_pdf = data[:5] == b"%PDF-" or name.endswith(".pdf")
     if is_pdf:
-        pages, cap_warning = pdf_pages_from_bytes(data, dpi=dpi)
+        pages, cap_warning, render_dpi = pdf_pages_from_bytes(data, dpi=dpi)
         warning = cap_warning
     else:
         pages = [image_page_from_bytes(data)]
-    if dpi < 200:
-        dpi_warning = f"dpi={dpi} أقل من 200 — جودة الصفحات الممسوحة قد تكون ضعيفة (يُنصح بـ 300)"
+    if isinstance(render_dpi, int) and render_dpi < 200:
+        dpi_warning = (f"الدقة المختارة {render_dpi} — سريعة لكن جودة الصفحات الممسوحة "
+                       f"قد تكون ضعيفة (200 متوازنة، 300 عالية الدقة)")
         warning = f"{warning} {dpi_warning}" if warning else dpi_warning
-    return {"is_pdf": is_pdf, "pages": pages, "warning": warning}
+    out: dict = {"is_pdf": is_pdf, "pages": pages, "warning": warning}
+    if render_dpi is not None:
+        out["render_dpi"] = render_dpi
+    return out

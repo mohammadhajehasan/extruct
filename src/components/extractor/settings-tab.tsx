@@ -1174,21 +1174,42 @@ const [auditLoading, setAuditLoading] = useState(false);
             <Cog className="h-4 w-4 text-primary" /> المعالجة
           </h3>
           <div className="space-y-1.5">
-            <Label htmlFor="dpi">دقة PDF (DPI) — 200 إلى 400</Label>
-            <Input
-              id="dpi"
-              type="number"
-              min={200}
-              max={400}
-              value={settings.dpi}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                if (!Number.isNaN(v)) setSettings({ dpi: Math.min(400, Math.max(200, v)) });
-              }}
-              className="min-h-11"
-            />
+            <Label>دقة render صفحات PDF الممسوحة</Label>
+            <RadioGroup
+              value={String(settings.dpi)}
+              onValueChange={(v) => setSettings({ dpi: Number(v) })}
+              className="grid grid-cols-3 gap-2"
+            >
+              {[
+                { v: "150", t: "⚡ سريعة 150", d: "أسرع ~2x — مسودات وملفات كبيرة" },
+                { v: "200", t: "⚖️ متوازنة 200", d: "الافتراضية الموصى بها" },
+                { v: "300", t: "🔍 عالية 300", d: "أدق للنص الصغير — أبطأ وأثقل" },
+              ].map((o) => (
+                <label
+                  key={o.v}
+                  className={`cursor-pointer rounded-lg border p-2 text-center text-xs transition-colors ${
+                    String(settings.dpi) === o.v
+                      ? "border-primary bg-primary/10 font-bold"
+                      : "border-muted hover:border-primary/50"
+                  }`}
+                  title={o.d}
+                >
+                  <input
+                    type="radio"
+                    name="pdf-dpi"
+                    value={o.v}
+                    checked={String(settings.dpi) === o.v}
+                    onChange={() => setSettings({ dpi: Number(o.v) })}
+                    className="sr-only"
+                  />
+                  <span className="block font-semibold">{o.t}</span>
+                  <span className="block text-[10px] text-muted-foreground mt-0.5">{o.d}</span>
+                </label>
+              ))}
+            </RadioGroup>
             <p className="text-[11px] text-muted-foreground">
-              حارس DPI: القيم الأقل من 200 تُنذر — 300 هي الافتراضية الموصى بها.
+              الملف يُرفع بدقته الأصلية دائماً — الدقة المختارة تُستخدم لترميز صفحات المسح فقط.
+              عند تجاوز الذاكرة تُرفض العملية برسالة عربية قبل المعالجة (اختر دقة أقل).
             </p>
           </div>
           <div className="space-y-1.5">

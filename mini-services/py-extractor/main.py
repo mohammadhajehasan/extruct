@@ -337,11 +337,21 @@ async def pdf_parse(file: UploadFile = File(...), dpi: int = Form(300)):
     if len(data) > max_mb * 1024 * 1024:
         return {"ok": False, "error": f"الملف كبير ({len(data) / 1024 / 1024:.1f}MB يتجاوز {max_mb:g}MB) — قسّمه أو ارفعه بدقة أقل",
                 "error_type": "file_too_large", "error_ar": "الملف كبير — قسّمه لأجزاء أصغر أو اختر دقة أقل ثم أعد المحاولة"}
-    # تقييد الدقة على الخادم (150-300): حد أعلى يمنع تضخّم الذاكرة (OOM على 512MB).
-    dpi = max(150, min(int(dpi or 300), 300))
+    # نطاق الدقة المقبول من المستخدم (150-400): الباك يثبّت على سقف الأمان RENDER_MAX
+    # ويعلن القصّ في warning — لا رفض صامت ولا تجاهل لاختيار المستخدم.
+    # الملف يُرفع بدقته الأصلية دائماً؛ dpi هنا تتحكم بدقة render صفحات المسح فقط.
+    try:
+        requested_dpi = int(dpi or 200)
+    except (TypeError, ValueError):
+        requested_dpi = 200
+    requested_dpi = max(150, min(requested_dpi, 400))
     try:
         parsed = await asyncio.to_thread(pdfio.parse_file, data,
-                                         file.filename or "", dpi)
+                                         file.filename or "", requested_dpi)
+    except MemoryError as e:  # تقدير الذاكرة المسبق: الدقة × الصفحات > السقف
+        return {"ok": False, "error": str(e),
+                "error_type": "file_too_large",
+                "error_ar": f"{e} — اختر دقة أقل من الإعدادات ثم أعد الرفع"}
     except Exception as e:  # noqa: BLE001
         return err(f"فشل تحليل الملف: {e}")
     del data  # حرّر بايتات الملف بعد التحليل — لا حاجة لها في الرد
@@ -355,8 +365,11 @@ async def pdf_parse(file: UploadFile = File(...), dpi: int = Form(300)):
             p.pop("text", None)
     audit.log("pdf.parse", target=(file.filename or "")[:80],
               details={"is_pdf": parsed["is_pdf"], "pages": len(pages),
-                       "dpi": dpi, "elapsed_ms": int((time.time() - t0) * 1000)})
+                       "requested_dpi": requested_dpi, "render_dpi": parsed.get("render_dpi"),
+                       "elapsed_ms": int((time.time() - t0) * 1000)})
     out = {"ok": True, "is_pdf": parsed["is_pdf"], "pages": pages}
+    if parsed.get("render_dpi") is not None:
+        out["render_dpi"] = parsed["render_dpi"]
     if parsed.get("warning"):
         out["warning"] = parsed["warning"]
     return out

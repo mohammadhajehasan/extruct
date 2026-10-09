@@ -42,7 +42,7 @@ export const DEFAULT_SETTINGS: ExtractorSettings = {
   freeFirst: true,
   visionOnly: false,
   profile: "darken_clarity",
-  dpi: 300,
+  dpi: 200,
   concurrency: 3,
   consensusEnabled: true,
   failoverEnabled: false,
@@ -88,9 +88,9 @@ function withSettingsDefaults(s?: Partial<ExtractorSettings> | null): ExtractorS
     ? Math.min(6, Math.max(1, Math.round(cc)))
     : DEFAULT_SETTINGS.concurrency;
   const dpi = Number(m.dpi);
-  m.dpi = Number.isFinite(dpi)
-    ? Math.min(400, Math.max(50, Math.round(dpi)))
-    : DEFAULT_SETTINGS.dpi;
+  // دقة render صفحات المسح — تُطبَّع لأقرب مستوى مدعوم (150/200/300) بدل أي رقم عشوائي.
+  const _dpiLevels = [150, 200, 300];
+  m.dpi = _dpiLevels.includes(Math.round(dpi)) ? Math.round(dpi) : DEFAULT_SETTINGS.dpi;
   if (!m.providerKeys || typeof m.providerKeys !== "object" || Array.isArray(m.providerKeys)) {
     m.providerKeys = {};
   } else {
