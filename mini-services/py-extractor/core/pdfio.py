@@ -20,10 +20,18 @@ DETECT_DPI = int(os.environ.get("PDF_DETECT_DPI", "150"))
 # A4: 8.27 × 11.69 بوصة — تُستخدم لتقدير dpi من عرض الصورة
 A4_WIDTH_INCH = 8.27
 
-# عدد العمال المتوازية. كل عامل يُنتج صورة صفحة كاملة في الذاكرة، لذا الافتراضي 2:
-# على Render free (512MB) الأربعة يضاعفون ذروة الذاكرة ويسبّبون OOM → 503.
-# PDF_PARSE_WORKERS=1 هو الأكثر أمانًا (PyMuPDF غير مضمون مع الوصول المتزامن).
+# عدد العمال المتوازية — توازن سرعة/ذاكرة:
+# - كل عامل يُنتج صورة صفحة كاملة في الذاكرة ثم يحررها فور الترميز (del img,pix).
+# - 2 هو التوازن الآمن على Render free (512MB): تسريع ~2x عن التسلسلي بذروة مقبولة.
+# - 1 تسلسلي (الأكثر أماناً، PyMuPDF غير مضمون الخيوط) — اضبط PDF_PARSE_WORKERS=1 عند OOM.
 _PARALLEL_WORKERS = max(1, int(os.environ.get("PDF_PARSE_WORKERS", "2")))
+
+# دقة render الصفحات الممسوحة — منفصلة عن dpi الطلب (الذي يُستخدم للتحذيرات فقط).
+# خفض 300→200 يقلّص البكسلات ~2.25x (وقت render+ترميز+حجم base64 معاً) مع بقاء
+# الدقة كافية للاستخراج (الواجهة تسوّي لـ2048px قبل النموذج على أي حال).
+# يُتجاوز عبر PDF_RENDER_DPI، ودpi الطلب يُثبَّت عليه إن لم يُضبط المتغير.
+RENDER_DPI_DEFAULT = int(os.environ.get("PDF_RENDER_DPI", "200"))
+RENDER_DPI_MAX = 300
 
 # سقف عدد الصفحات المُصيَّرة في الطلب الواحد (حماية من نفاد الذاكرة). 0 = بلا سقف.
 MAX_PAGES = max(0, int(os.environ.get("PDF_MAX_PAGES", "60")))
@@ -41,16 +49,20 @@ def _parse_single_page(args: tuple) -> dict:
     render_dpi هو دقة الـ pixmap للصفحات الممسوحة."""
     i, pg, detect_dpi, render_dpi = args
     text = pg.get_text().strip()
+    # مسار سريع أول: صفحة بلا نص إطلاقاً = مسح يقيناً — تخطَّ get_drawings/find_tables
+    # (استدعاءان مكلفان بلا فائدة هنا) وانتقل للـrender مباشرة.
+    if not text:
+        return _render_scan_page(i, pg, render_dpi)
     # 15.9.1 — مرشّح رخيص قبل find_tables() المكلف: جدول PDF حقيقي يحتاج
     # رسومات متجهة كافية؛ صفحة مسح + OCR نصي تُستبعد فوراً.
     tables = []
     has_enough_drawings = len(pg.get_drawings()) >= 4
-    if text and has_enough_drawings:
+    if has_enough_drawings:
         try:
             tables = pg.find_tables().tables
         except Exception:
             tables = []
-    if text and has_enough_drawings and tables:
+    if has_enough_drawings and tables:
         native = []
         for t in tables:
             try:
@@ -62,21 +74,23 @@ def _parse_single_page(args: tuple) -> dict:
         return {"index": i, "kind": "native", "tables": native,
                 "text": text, "image_b64": None, "needs_render": False}
     else:
-        # صفحة مسح — render بدقة render_dpi ثم ترميز JPEG **داخل العامل نفسه**
-        # حتى تُحرَّر مصفوفة الصورة فور انتهائه ولا تتراكم صفحات كاملة في الذاكرة.
-        # del pix صريح: عينة الـpixmap خام (≈26MB لـA4@300dpi) يجب تحريرها مع img.
-        zoom = max(render_dpi, 72) / 72.0
-        try:
-            pix = pg.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
-            img = _pix_to_bgr(pix)
-        except Exception:
-            pix = pg.get_pixmap(alpha=False)
-            img = _pix_to_bgr(pix)
-        b64 = encode_bgr_to_b64_jpeg(img)
-        del img, pix
-        return {"index": i, "kind": "image", "tables": [],
-                "text": text, "image_b64": b64, "mime": "image/jpeg",
-                "needs_render": True}
+        return _render_scan_page(i, pg, render_dpi, text=text)
+
+
+def _render_scan_page(i: int, pg, render_dpi: int, text: str = "") -> dict:
+    """render صفحة مسح + ترميز JPEG داخل العامل — تُحرَّر المصفوفة فوراً."""
+    zoom = max(render_dpi, 72) / 72.0
+    try:
+        pix = pg.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+        img = _pix_to_bgr(pix)
+    except Exception:
+        pix = pg.get_pixmap(alpha=False)
+        img = _pix_to_bgr(pix)
+    b64 = encode_bgr_to_b64_jpeg(img)
+    del img, pix
+    return {"index": i, "kind": "image", "tables": [],
+            "text": text, "image_b64": b64, "mime": "image/jpeg",
+            "needs_render": True}
 
 
 def pdf_pages_from_bytes(data: bytes, dpi: int = DEFAULT_DPI) -> tuple:
@@ -84,19 +98,23 @@ def pdf_pages_from_bytes(data: bytes, dpi: int = DEFAULT_DPI) -> tuple:
     لكل صفحة PDF:
       - كشف مبدئي بـ DETECT_DPI (150 افتراضياً) لتحديد ما إذا كانت الصفحة
         نصية (جداول native) أم مسح — الكشف رخيص ولا يحتاج rendering.
-      - الصفحات الممسوحة فقط تُrender بدقة dpi كاملة وتُرمَّز JPEG فوراً.
+      - الصفحات الممسوحة فقط تُrender بدقة RENDER (افتراضي 200، سقف 300)
+        وتُرمَّز JPEG فوراً. دقة الطلب dpi تُستخدم للتحذيرات فقط.
     يعيد: (pages, warning). الصفحات الممسوحة تحمل image_b64 + mime مباشرة
     (لا مصفوفات BGR محتجزة)، فلا تتراكم صور كاملة في الذاكرة ولا تُسرَّب بين الطلبات.
     """
     warning: Optional[str] = None
     out = []
+    # دقة الـrender الفعلية: PDF_RENDER_DPI (افتراضي 200) يثبّت الدقة بغض النظر عن dpi
+    # الطلب — الأخير يُستخدم للتحذيرات فقط. السقف 300 دائماً.
+    render_dpi = min(max(RENDER_DPI_DEFAULT, 72), RENDER_DPI_MAX)
     with fitz.open(stream=data, filetype="pdf") as doc:
         total = doc.page_count
         limit = total if MAX_PAGES <= 0 else min(total, MAX_PAGES)
         if limit < total:
             warning = (f"الملف يحتوي {total} صفحة — عُولجت أول {limit} صفحة فقط "
                        f"لحماية الخدمة من نفاد الذاكرة (يمكن رفع الحد عبر PDF_MAX_PAGES).")
-        args = [(i, doc.load_page(i), DETECT_DPI, dpi) for i in range(limit)]
+        args = [(i, doc.load_page(i), DETECT_DPI, render_dpi) for i in range(limit)]
         results = []
         with ThreadPoolExecutor(max_workers=_PARALLEL_WORKERS) as ex:
             for r in ex.map(_parse_single_page, args):

@@ -481,7 +481,7 @@ addFailure({
       <ImageQueue
         onFiles={onFiles}
         busy={pdfParsing}
-        busyText="جارٍ تحليل الـPDF (فصل الصفحات النصية عن الممسوحة)…"
+        busyText="جارٍ تحليل الـPDF (النصية تُستخرج فوراً بدقة 100% والممسوحة تُرمَّز بدقة 200)…"
         dropHint="عدة صور + PDF بنفس الدفعة — صفحات PDF النصية تُستخرج مباشرة بدقة 100% والممسوحة تُضاف للطابور"
         title="طابور صور الجداول"
         selectedId={selectedId}
